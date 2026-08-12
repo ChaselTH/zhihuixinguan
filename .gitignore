@@ -1,0 +1,28 @@
+# Build and release outputs
+/build/
+/dist/
+*.class
+*.jar
+*.tar.gz
+
+# Runtime and imported business data
+/data/
+/表格/
+*.et
+*.xls
+*.xlsx
+
+# Internal project and compliance documents
+*.doc
+*.docx
+*.dsps.doc
+*.png
+
+# Local environment files
+.env
+.env.*
+*.log
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
