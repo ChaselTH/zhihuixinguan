@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import {existsSync} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
@@ -16,7 +17,23 @@ await fs.writeFile(path.join(app,'VERSION'),'test-pr0\n');
 await fs.copyFile(path.join(root,'start.sh'),path.join(app,'start.sh'));
 await fs.writeFile(path.join(jdk,'jdk','bin','java'),'#!/usr/bin/env bash\nset -euo pipefail\nif [[ "${1:-}" == -version ]]; then echo synthetic-java >&2; exit 0; fi\nif [[ "${INSTALL_SMOKE_FAIL:-}" == yes ]]; then exit 19; fi\nwhile (( $# > 0 )); do if [[ "$1" == --data-root ]]; then data_dir="$2"; break; fi; shift; done\n[[ -n "${data_dir:-}" && -d "$data_dir" && ! -L "$data_dir" ]] || exit 20\nprintf "synthetic migration checked\\n" > "$data_dir/synthetic-migration.txt"\n');
 const tar=process.platform==='win32'?'tar.exe':'tar';
-const bash=process.platform==='win32'?'C:\\Program Files\\Git\\bin\\bash.exe':'bash';
+function resolveBash(){
+  if(process.platform!=='win32')return process.env.BASH_EXE||'bash';
+  const candidates=[];
+  if(process.env.BASH_EXE)candidates.push(process.env.BASH_EXE);
+  const pathResult=spawnSync('where.exe',['bash.exe'],{encoding:'utf8',windowsHide:true});
+  if(pathResult.status===0)candidates.push(...pathResult.stdout.split(/\r?\n/).filter(Boolean));
+  const gitResult=spawnSync('where.exe',['git.exe'],{encoding:'utf8',windowsHide:true});
+  if(gitResult.status===0)for(const git of gitResult.stdout.split(/\r?\n/).filter(Boolean)){
+    const gitRoot=path.dirname(path.dirname(git));
+    candidates.push(path.join(gitRoot,'bin','bash.exe'),path.join(gitRoot,'usr','bin','bash.exe'));
+  }
+  for(const programFiles of [process.env.ProgramFiles,process.env['ProgramFiles(x86)']])if(programFiles)candidates.push(path.join(programFiles,'Git','bin','bash.exe'));
+  const resolved=candidates.find(candidate=>existsSync(candidate));
+  if(!resolved)throw new Error('安装器模拟测试需要 Bash；请安装 Git for Windows，或通过 BASH_EXE 指定 bash.exe');
+  return resolved;
+}
+const bash=resolveBash();
 function run(cmd,args,options={}){const result=spawnSync(cmd,args,{cwd:root,encoding:'utf8',windowsHide:true,...options});if(result.error)throw result.error;return result;}
 function archive(file,cwd){const r=run(tar,['-czf',file,'-C',cwd,'.']);assert.equal(r.status,0,r.stderr);}
 archive(path.join(payload,'app.tar.gz'),app);
