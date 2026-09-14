@@ -13,9 +13,12 @@ final class ImportRecord {
   int headerRows;
   List<String> columns = new ArrayList<String>();
   List<List<String>> rows = new ArrayList<List<String>>();
+  List<Long> versions = new ArrayList<Long>();
+  String organizationId = "";
+  java.util.Map<String,String> legacyExtras = java.util.Map.of();
 
   String datasetLabel() {
-    return "multi".equals(dataset) ? "多重预警排查清单" : "负面闭环清单";
+    return xinguan.platform.DatasetSchema.get(dataset).label;
   }
 }
 

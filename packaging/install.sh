@@ -1,138 +1,114 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 PAYLOAD_DIR="$SCRIPT_DIR/payload"
-CHECKSUM_FILE="$SCRIPT_DIR/SHA256SUMS"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/ZhihuiXinguan}"
+# PR0 deliberately installs beside the stable version unless INSTALL_DIR is explicitly supplied.
+INSTALL_DIR="${INSTALL_DIR:-$HOME/ZhihuiXinguan-PR0}"
 STAGING_DIR=""
 BACKUP_DIR=""
-UPGRADE=0
 OLD_MOVED=0
-DATA_MOVED=0
 NEW_INSTALLED=0
-
-fail() { echo "安装失败：$*" >&2; exit 1; }
-section() { printf '\n==> %s\n' "$*"; }
-safe_target() {
-  local path="${1:-}"
-  [[ -n "$path" && "$path" != "/" && "$path" != "." && "$path" != "$HOME" ]]
-}
-is_our_install() {
-  local path="${1:-}"
-  [[ -d "$path" && ! -L "$path" && -f "$path/.zhihui_xinguan_install" ]] || return 1
-  [[ "$(head -n 1 -- "$path/.zhihui_xinguan_install" 2>/dev/null || true)" == "zhihui-xinguan" ]]
-}
-service_running() {
-  local pid_file="$1/run/service.pid" pid=""
-  [[ -f "$pid_file" ]] || return 1
-  IFS= read -r pid < "$pid_file" || return 1
-  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
-  kill -0 "$pid" 2>/dev/null
-}
-cleanup_and_rollback() {
-  local code=$?
+fail(){ printf '安装失败：%s\n' "$*" >&2; exit 1; }
+section(){ printf '\n==> %s\n' "$*"; }
+is_install(){ [[ -d "$1" && ! -L "$1" && -f "$1/.zhihui_xinguan_install" ]] && [[ "$(head -n 1 -- "$1/.zhihui_xinguan_install")" == "zhihui-xinguan" ]]; }
+rollback(){
+  local result=$?
   trap - EXIT
-  if (( code != 0 && OLD_MOVED == 1 && NEW_INSTALLED == 0 )); then
-    echo "升级未完成，正在恢复旧版本……" >&2
-    if (( DATA_MOVED == 1 )) && [[ -d "$STAGING_DIR/data" && ! -e "$BACKUP_DIR/data" ]]; then
-      mv -- "$STAGING_DIR/data" "$BACKUP_DIR/data" || true
-      DATA_MOVED=0
+  if (( result != 0 )); then
+    if (( OLD_MOVED == 1 && NEW_INSTALLED == 0 )) && [[ ! -e "$INSTALL_DIR" ]] && is_install "$BACKUP_DIR"; then
+      mv -- "$BACKUP_DIR" "$INSTALL_DIR" || { printf '自动恢复失败，请保留备份并联系维护人：%s\n' "$BACKUP_DIR" >&2; exit "$result"; }
+      printf '已恢复原安装目录：%s\n' "$INSTALL_DIR" >&2
     fi
-    if [[ ! -e "$INSTALL_DIR" && -d "$BACKUP_DIR" ]]; then mv -- "$BACKUP_DIR" "$INSTALL_DIR" || true; fi
+    [[ -z "$STAGING_DIR" || ! -d "$STAGING_DIR" ]] || printf '未完成的暂存目录已保留，未删除任何旧版数据：%s\n' "$STAGING_DIR" >&2
   fi
-  if [[ -n "${STAGING_DIR:-}" && -d "$STAGING_DIR" ]]; then
-    local parent=""; parent="$(cd "$(dirname "$STAGING_DIR")" && pwd)"
-    case "$STAGING_DIR" in "$parent"/.zhihui-xinguan-install-*) rm -rf -- "$STAGING_DIR" ;; *) echo "异常临时目录未自动清理：$STAGING_DIR" >&2 ;; esac
-  fi
-  exit "$code"
+  exit "$result"
 }
-trap cleanup_and_rollback EXIT
+trap rollback EXIT
 
-section "检查离线安装环境"
-[[ -d "$PAYLOAD_DIR" ]] || fail "缺少 payload 目录，请从 U 盘完整复制安装包"
-[[ -f "$CHECKSUM_FILE" ]] || fail "缺少 SHA256SUMS"
-command -v sha256sum >/dev/null 2>&1 || fail "系统缺少 sha256sum"
-command -v tar >/dev/null 2>&1 || fail "系统缺少 tar"
-(cd "$SCRIPT_DIR" && sha256sum -c SHA256SUMS) || fail "安装包校验失败，请重新从 U 盘复制"
-
+section '校验离线安装包'
+[[ -d "$PAYLOAD_DIR" && -f "$SCRIPT_DIR/SHA256SUMS" ]] || fail '请从 U 盘完整复制安装目录（包括 payload 和 SHA256SUMS）'
+for command_name in sha256sum tar mktemp cp mv find; do command -v "$command_name" >/dev/null 2>&1 || fail "系统缺少 $command_name"; done
+(cd "$SCRIPT_DIR" && sha256sum -c SHA256SUMS) || fail '安装包校验失败'
 case "$(uname -m)" in
   aarch64|arm64) JDK_ARCHIVE="$PAYLOAD_DIR/microsoft-jdk-21.0.12-linux-aarch64.tar.gz" ;;
   x86_64|amd64) JDK_ARCHIVE="$PAYLOAD_DIR/microsoft-jdk-21.0.12-linux-x64.tar.gz" ;;
-  *) fail "不支持当前 CPU 架构：$(uname -m)；安装包仅包含 aarch64/arm64 与 x86_64/amd64" ;;
+  *) fail "安装包不支持当前 CPU 架构：$(uname -m)" ;;
 esac
-[[ -f "$JDK_ARCHIVE" ]] || fail "缺少当前 CPU 所需的离线 Java 运行环境"
-[[ -f "$PAYLOAD_DIR/app.tar.gz" ]] || fail "缺少应用程序包"
+[[ -f "$JDK_ARCHIVE" && -f "$PAYLOAD_DIR/app.tar.gz" ]] || fail '缺少应用或运行时文件'
+for archive in "$PAYLOAD_DIR/app.tar.gz" "$JDK_ARCHIVE"; do
+  tar -tzf "$archive" | awk 'BEGIN{bad=0} /^\//{bad=1} /(^|\/)\.\.(\/|$)/{bad=1} END{exit bad}' || fail '压缩包包含异常路径'
+done
 
 case "$INSTALL_DIR" in /*) ;; *) INSTALL_DIR="$PWD/$INSTALL_DIR" ;; esac
-safe_target "$INSTALL_DIR" || fail "安装目录不安全：$INSTALL_DIR"
-INSTALL_BASENAME="$(basename "$INSTALL_DIR")"
-[[ -n "$INSTALL_BASENAME" && "$INSTALL_BASENAME" != "." && "$INSTALL_BASENAME" != ".." ]] || fail "安装目录名称无效"
-INSTALL_PARENT="$(dirname "$INSTALL_DIR")"
-mkdir -p "$INSTALL_PARENT"
-INSTALL_PARENT="$(cd "$INSTALL_PARENT" && pwd -P)"
+[[ "$INSTALL_DIR" != / && "$INSTALL_DIR" != "$HOME" && "$INSTALL_DIR" != "$PWD" ]] || fail '不能以根目录、用户目录或当前目录为安装目标'
+INSTALL_BASENAME="$(basename -- "$INSTALL_DIR")"
+[[ -n "$INSTALL_BASENAME" && "$INSTALL_BASENAME" != . && "$INSTALL_BASENAME" != .. ]] || fail '安装目录无效'
+INSTALL_PARENT="$(dirname -- "$INSTALL_DIR")"
+[[ -d "$INSTALL_PARENT" && ! -L "$INSTALL_PARENT" ]] || fail '安装父目录必须已经存在且不能是符号链接'
+INSTALL_PARENT="$(cd -- "$INSTALL_PARENT" && pwd -P)"
 INSTALL_DIR="$INSTALL_PARENT/$INSTALL_BASENAME"
+[[ "$INSTALL_DIR" != "$HOME" && "$INSTALL_DIR" != / && ! -L "$INSTALL_DIR" ]] || fail '安装目标校验失败'
+UPGRADE=0
 if [[ -e "$INSTALL_DIR" ]]; then
-  is_our_install "$INSTALL_DIR" || fail "目标已存在但不是智慧信管安装目录，拒绝覆盖：$INSTALL_DIR"
-  service_running "$INSTALL_DIR" && fail "服务仍在运行；请回到启动窗口按 Ctrl+C，确认 ./start.sh status 显示已停止后重试"
+  is_install "$INSTALL_DIR" || fail "目标不是智慧信管安装目录，拒绝覆盖：$INSTALL_DIR"
+  if [[ -f "$INSTALL_DIR/run/service.pid" ]]; then
+    IFS= read -r old_pid < "$INSTALL_DIR/run/service.pid" || true
+    if [[ "${old_pid:-}" =~ ^[0-9]+$ ]] && kill -0 "$old_pid" 2>/dev/null; then fail '服务仍在运行，请在启动窗口按 Ctrl+C 后重试'; fi
+  fi
+  [[ -d "$INSTALL_DIR/data" && ! -L "$INSTALL_DIR/data" ]] || fail '旧数据目录缺失或为链接，停止升级'
+  invalid_data="$(find "$INSTALL_DIR/data" ! -type f ! -type d -print -quit)"
+  [[ -z "$invalid_data" ]] || fail "数据目录含链接或特殊文件，停止升级：$invalid_data"
   UPGRADE=1
-  OLD_VERSION="$(tr -d '\r\n' < "$INSTALL_DIR/VERSION" 2>/dev/null || printf '未知')"
-  section "检测到旧版本 V$OLD_VERSION，将原地升级并保留全部数据和密码"
 fi
 
-STAGING_DIR="$INSTALL_PARENT/.zhihui-xinguan-install-$$"
-[[ "$STAGING_DIR" == "$INSTALL_PARENT"/.zhihui-xinguan-install-* && ! -e "$STAGING_DIR" ]] || fail "临时目录校验失败"
-mkdir "$STAGING_DIR"
-chmod 700 "$STAGING_DIR" 2>/dev/null || true
-
+section "准备安装目标：$INSTALL_DIR"
 AVAILABLE_KB="$(df -Pk "$INSTALL_PARENT" | awk 'NR==2 {print $4}')"
-if [[ "$AVAILABLE_KB" =~ ^[0-9]+$ ]] && (( AVAILABLE_KB < 1048576 )); then fail "安装磁盘剩余空间不足 1 GB"; fi
-
-section "安装智慧信管应用"
+[[ "$AVAILABLE_KB" =~ ^[0-9]+$ ]] || fail '无法检查磁盘剩余空间'
+(( AVAILABLE_KB >= 1048576 )) || fail '安装磁盘可用空间不足 1 GB'
+STAGING_DIR="$(mktemp -d "$INSTALL_PARENT/.zhihui-xinguan-stage-XXXXXXXX")"
+[[ -n "$STAGING_DIR" && "$STAGING_DIR" == "$INSTALL_PARENT"/.zhihui-xinguan-stage-* && -d "$STAGING_DIR" && ! -L "$STAGING_DIR" ]] || fail '暂存目录校验失败'
 tar -xzf "$PAYLOAD_DIR/app.tar.gz" -C "$STAGING_DIR"
 mkdir -p "$STAGING_DIR/runtime/jdk" "$STAGING_DIR/data" "$STAGING_DIR/run"
-
-section "安装匹配 CPU 架构的离线 Java 21"
 tar -xzf "$JDK_ARCHIVE" -C "$STAGING_DIR/runtime/jdk" --strip-components=1
+[[ -f "$STAGING_DIR/app/zhihui-xinguan.jar" && -f "$STAGING_DIR/VERSION" && -f "$STAGING_DIR/start.sh" ]] || fail '应用内容不完整'
 chmod +x "$STAGING_DIR/start.sh" "$STAGING_DIR/runtime/jdk/bin/java"
 printf 'zhihui-xinguan\n' > "$STAGING_DIR/.zhihui_xinguan_install"
-chmod 700 "$STAGING_DIR/data" "$STAGING_DIR/run" 2>/dev/null || true
-
-if (( UPGRADE == 0 )); then
-  mv -- "$STAGING_DIR" "$INSTALL_DIR"
-  STAGING_DIR=""
-  NEW_INSTALLED=1
-else
-  section "保留数据并原地替换旧程序"
-  BACKUP_DIR="$INSTALL_PARENT/.zhihui-xinguan-backup-$(date +%Y%m%d%H%M%S)-$$"
-  [[ "$BACKUP_DIR" == "$INSTALL_PARENT"/.zhihui-xinguan-backup-* && ! -e "$BACKUP_DIR" ]] || fail "升级备份目录校验失败"
-  mv -- "$INSTALL_DIR" "$BACKUP_DIR"
-  OLD_MOVED=1
-  is_our_install "$BACKUP_DIR" || fail "旧安装移动后校验失败"
-  rmdir -- "$STAGING_DIR/data"
-  mv -- "$BACKUP_DIR/data" "$STAGING_DIR/data"
-  DATA_MOVED=1
-  mv -- "$STAGING_DIR" "$INSTALL_DIR"
-  STAGING_DIR=""
-  NEW_INSTALLED=1
-  if [[ -d "$BACKUP_DIR" && ! -L "$BACKUP_DIR" && ! -e "$BACKUP_DIR/data" ]] && is_our_install "$BACKUP_DIR"; then
-    rm -rf -- "$BACKUP_DIR" || echo "警告：新版本安装完成，但旧程序备份未能清理：$BACKUP_DIR" >&2
-  else
-    echo "警告：新版本安装完成；旧程序备份校验未通过，未自动清理：$BACKUP_DIR" >&2
-  fi
+if (( UPGRADE == 1 )); then
+  section '复制旧数据到暂存区；原程序和原数据尚未改动'
+  cp -a -- "$INSTALL_DIR/data/." "$STAGING_DIR/data/"
 fi
 
+# Keep existing local settings on upgrades; a generic package contains no credentials.
+if (( UPGRADE == 1 )) && [[ -e "$INSTALL_DIR/bootstrap.local.properties" || -L "$INSTALL_DIR/bootstrap.local.properties" ]]; then
+  [[ -f "$INSTALL_DIR/bootstrap.local.properties" && ! -L "$INSTALL_DIR/bootstrap.local.properties" ]] || fail '旧初始化配置不是普通文件，停止升级'
+  cp -- "$INSTALL_DIR/bootstrap.local.properties" "$STAGING_DIR/bootstrap.local.properties"
+elif [[ -e "$PAYLOAD_DIR/bootstrap.local.properties" || -L "$PAYLOAD_DIR/bootstrap.local.properties" ]]; then
+  [[ -f "$PAYLOAD_DIR/bootstrap.local.properties" && ! -L "$PAYLOAD_DIR/bootstrap.local.properties" ]] || fail '离线初始化配置不是普通文件'
+  cp -- "$PAYLOAD_DIR/bootstrap.local.properties" "$STAGING_DIR/bootstrap.local.properties"
+fi
+if [[ -f "$STAGING_DIR/bootstrap.local.properties" ]]; then chmod 600 "$STAGING_DIR/bootstrap.local.properties"; fi
+
+section '验证离线 Java 并检查数据迁移'
+"$STAGING_DIR/runtime/jdk/bin/java" -version || fail '离线 Java 无法运行，原版本保持不变'
+"$STAGING_DIR/runtime/jdk/bin/java" -Dfile.encoding=UTF-8 -Xmx768m -cp "$STAGING_DIR/app/zhihui-xinguan.jar:$STAGING_DIR/app/lib/*" Main --root "$STAGING_DIR" --data-root "$STAGING_DIR/data" --migrate-only || fail '数据迁移验证未通过，原版本保持不变'
+
+if (( UPGRADE == 1 )); then
+  BACKUP_DIR="$INSTALL_PARENT/.zhihui-xinguan-backup-$(date +%Y%m%d%H%M%S)-$$"
+  [[ "$BACKUP_DIR" == "$INSTALL_PARENT"/.zhihui-xinguan-backup-* && ! -e "$BACKUP_DIR" ]] || fail '备份目标异常'
+  section "保留完整旧版备份：$BACKUP_DIR"
+  mv -- "$INSTALL_DIR" "$BACKUP_DIR"
+  OLD_MOVED=1
+fi
+[[ ! -e "$INSTALL_DIR" ]] || fail '安装目标意外出现，停止替换'
+mv -- "$STAGING_DIR" "$INSTALL_DIR"
+STAGING_DIR=""
+NEW_INSTALLED=1
 trap - EXIT
 VERSION="$(tr -d '\r\n' < "$INSTALL_DIR/VERSION")"
-section "$([[ "$UPGRADE" -eq 1 ]] && printf '升级完成' || printf '安装完成')：智慧信管 V$VERSION"
-echo "安装目录：$INSTALL_DIR"
-if (( UPGRADE == 1 )); then echo "已保留：全部月份数据、导入批次和管理员密码"; fi
-echo
-echo "启动命令："
-echo "  cd \"$INSTALL_DIR\""
-echo "  ./start.sh"
-echo
-echo "启动时询问端口，直接回车使用默认端口 2874。"
-echo "查看状态：./start.sh status"
-echo "关闭服务：回到启动窗口按 Ctrl+C"
-echo "管理入口：http://<这台麒麟电脑的IP>:端口/admin"
+section "智慧信管 V$VERSION 安装完成"
+printf '已有账号及密码保持不变。首次空库启动需本地 bootstrap.local.properties；通用包只提供空白示例。\n'
+printf '安装目录：%s\n' "$INSTALL_DIR"
+[[ -z "$BACKUP_DIR" ]] || printf '旧版和全部旧数据备份：%s（不会自动删除）\n' "$BACKUP_DIR"
+printf '\n这是公共基础测试版，默认与正式版并行安装。\n启动：cd "%s" && ./start.sh\n默认端口 2874，可在启动时另选；Ctrl+C 关闭服务。\n查看状态：./start.sh status\n' "$INSTALL_DIR"

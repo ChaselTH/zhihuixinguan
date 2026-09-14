@@ -69,12 +69,12 @@ final class RangeSelection {
   }
 
   String queryString() {
-    StringBuilder result = new StringBuilder("scope=").append(Html.u(scope));
-    result.append("&month=").append(Html.u(month));
-    result.append("&year=").append(Html.u(year));
+    StringBuilder result = new StringBuilder("scope=").append(PageLayout.u(scope));
+    result.append("&month=").append(PageLayout.u(month));
+    result.append("&year=").append(PageLayout.u(year));
     result.append("&quarter=").append(quarter);
-    result.append("&start=").append(Html.u(start));
-    result.append("&end=").append(Html.u(end));
+    result.append("&start=").append(PageLayout.u(start));
+    result.append("&end=").append(PageLayout.u(end));
     return result.toString();
   }
 
