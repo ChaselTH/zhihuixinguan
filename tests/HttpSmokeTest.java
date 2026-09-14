@@ -27,6 +27,7 @@ public final class HttpSmokeTest {
     Process server=new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin","java").toString(),"-Dfile.encoding=UTF-8","-cp",app.resolve("app/zhihui-xinguan.jar")+File.pathSeparator+app.resolve("app/lib")+File.separator+"*","Main","--root",httpRoot.toString(),"--data-root",data.toString(),"--bind","127.0.0.1","--port",""+port).redirectErrorStream(true).redirectOutput(data.resolve("server.log").toFile()).start();
     try{
       boolean ready=false;for(int i=0;i<100;i++){try{if(get("/health").statusCode()==200){ready=true;break;}}catch(IOException ignored){}Thread.sleep(100);}check(ready,"server ready");
+      check(get("/health").body().contains("SCHEMA=2"),"health reports migrated schema version");
       check(get("/export?dataset=multi").statusCode()==303,"anonymous export requires login");
       loginAndChange(superNumber,password,false);
       check(get("/bootstrap.local.properties").statusCode()==404&&get("/assets/bootstrap.local.properties").statusCode()==404,"local initialization file is never served by HTTP");

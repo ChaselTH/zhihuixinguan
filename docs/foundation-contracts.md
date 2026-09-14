@@ -2,7 +2,7 @@
 
 2026-09-14 协作修订：统一使用 `main` 作为后续共同开发基线，不再以 `codex/integration-v0.3` 为前置条件。先将 PR0.6 公共基础合入 main，再由公共维护人实现、测试并合并工作流公共契约补丁，A/B 才从 main 的同一明确提交创建业务分支。合入 main 不等于可以正式投产；发布仍须单独联调、离线及实机验收。
 
-本次修订时的核对快照：基础分支 `codex/v0.3-foundation` 已推送至 `bd37731`，版本 `0.3.0-pr0.6`；远端 main 仍为 `ccbfbcf`，尚无 PR。本文修改分工与交接要求，不代表已经合并或实现待补接口。具体放行条件及交接表见 [B1 工作流就绪清单](B1-工作流就绪清单.md)。
+PR0.7 进展：从 v0.3 基础 `8c72d16239d9bc3bc8d4b8e1c27706c89d84bfed` 新建公共补丁分支，实现下述事务能力并通过本地测试。基础 PR #1 已合入 main（816e8f7646bd5b0f01ae815cff17e2e4741f907a），公共补丁随本文件所在 PR 交接，以实际合并记录为准。按用户最新要求，先合并、打包和安装测试，A1/B1 暂缓，不把合并视为开工授权。真实 API 见 [工作流公共接口](workflow-platform-api.md)，放行条件见 [B1 工作流就绪清单](B1-工作流就绪清单.md)。
 
 PR0.6：`BootstrapConfig` 仅在空账号库读取应用目录下的 `bootstrap.local.properties`，只支持 auth_number/password。`AuthService` 不再内置初始化身份；普通构建只复制空白 bootstrap.example.properties，已有账号完全忽略本地初始化配置。公开源码及测试不得出现个人初始化凭据。私有离线打包只有显式传入 `-BootstrapConfig` 才附带该文件；该定制包不得公开。安装升级优先保留旧本地配置，账户密码仍以已有数据库为准。
 
@@ -25,14 +25,15 @@ PR0.3：`AuthService` 从持久化 users 认证，`UserAccount` 不含密码，`
 - `OfficialDataWriter.publishDirect` 仅分行管理员／支行管理员／复核员可用，整批数据和审计一个事务，版本过期整批回滚，请求 ID 保证幂等。
 - `PlatformStore.importRows` 独占分行管理员；业务来源指纹=模块＋规范期次＋机构＋全部非填报列。默认保留已有非空填写，显式覆盖可清空。确认版本基线和导入在同一锁／事务内验证。
 - 旧批次不整批替换，不删除本次没出现的历史行、月份或模块。来自同一批文件、来源相同而填写内容不同的记录拒绝导入，要求先核对。来源有变化会是新记录，不做模糊企业合并。
-- `WorkflowContracts` 约定 ChangeSet、状态及 saveDraft/preview/submit/approve/reject。当前只有接口，没有放行操作员的假实现。
-- H2 嵌入数据库，单应用进程持有数据库；数据库无 TCP/控制台。`resources/db/V001__foundation.sql` 建立基础、用户、申请、草稿、提交、通知及审计表。迁移脚本已用校验值锁定；后续只能新增 V002 等，并先补版本迁移器，不能改 V001 后强行忽略校验。
+- `PlatformStore.workflow()` 返回真实 WorkflowService，含 Draft／Preview／Submission／SnapshotRow、saveDraft／previewDraft／previewDirect／confirm／approve／reject 及授权查询。确认只收服务端预览 ID，不接受客户端替换值；共用正式写入校验原语但不嵌套调用会自行提交事务的 publishDirect。
+- `PlatformStore.notifications()` 返回个人通知、未读、已读及管理通知服务。工作流事件和回执与业务事务一致；通知中心 UI 后续 A1 提供。
+- H2 嵌入数据库，单应用进程持有数据库；数据库无 TCP/控制台。V001 完全未修改；新增 V002 和顺序迁移器，校验历史版本、记录迁移开始与完成，半途失败后停止启动并要求备份恢复，不盲目重跑 DDL。后续不得修改已经应用的迁移。
 
-当前身份表已实际使用，草稿、提交单、通知事件／阅读回执仍是结构预留，不声称相关持久化服务已完成。操作员目前只读及导出，草稿流程接入后再开放填写。
+当前身份、草稿、提交单、通知事件／个人回执已有服务端实现。工作流网页尚未接入，操作员仍只读及导出，现有直接填写路由仍为过渡入口，B1 与 A 集成后切换为差异确认流程。权限申请、安全提示、通知中心和公共审计页尚未完成。
 
-## B1 前置公共补丁（待实现，不属于已落地接口）
+## B1 前置公共补丁（本分支已实现，待评审合并）
 
-公共维护人先在独立 PR 中实现并合并以下能力；具体方法签名、错误类型和调用示例随该 PR 冻结，不让 B 猜测可用 API：
+公共维护人先在独立 PR 中评审并合并以下能力；真实签名已见 workflow-platform-api.md，合并后记录共同基线，B 不需要猜测 API：
 
 1. 私人草稿保存、列表、恢复及版本校验；所有读取／写入核验本人、当前身份和机构，不能只做支行级隔离。
 2. 服务端差异和确认凭据：绑定当前用户、操作类型、草稿版本／规范化内容以及正式行版本；确认后不得接受未经预览的替换内容。
@@ -66,7 +67,7 @@ PR0.3：`AuthService` 从持久化 users 认证，`UserAccount` 不含密码，`
 
 本地额外核验用户表头可运行 `node tools/build.mjs --offline --test --user-template`，工具不复制用户文件进入产物。每次构建独立输出目录，避免覆盖正在预览的 JAR。`build/foundation-build.json` 只在构建及测试通过后更新。
 
-`node tools/build.mjs --test` 会依次运行机构联动脚本测试、FoundationTest、HttpSmokeTest、IdentityTest、BootstrapTest；安装器模拟另行运行 `node tests/install-smoke.mjs`。全部身份和业务回归均使用虚构数据；真实 HTTP 测试在隔离应用目录中创建虚构本地初始化配置，不写入构建产物。必须区分自动测试、模拟 Linux 运行时和真实麒麟验收。
+`node tools/build.mjs --test` 会依次运行机构联动脚本测试、FoundationTest、HttpSmokeTest、IdentityTest、BootstrapTest、xinguan.platform.WorkflowPlatformTest、WorkflowReadModelTest；安装器模拟另行运行 `node tests/install-smoke.mjs`。当前本地共 815 项断言通过。全部身份和业务回归均使用虚构数据；真实 HTTP 测试在隔离应用目录中创建虚构本地初始化配置，不写入构建产物。必须区分公共服务自动测试、待接入的工作流 HTTP、模拟 Linux 运行时和真实麒麟验收。
 
 `*.sql` 在 `.gitattributes` 中固定 LF。V001 当前源文件及已交付资源均为 LF；Windows 和 Linux 检出时不得转换其换行，否则迁移校验值会变化，已有安装可能无法打开。后续迁移仍禁止修改已应用文件。
 

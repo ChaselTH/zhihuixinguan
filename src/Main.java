@@ -28,7 +28,7 @@ public final class Main extends HttpSupport {
     AuthService.Session session=null;
     try{
       String path=x.getRequestURI().getPath(),method=x.getRequestMethod();
-      if(method.equals("GET")&&path.equals("/health")){text(x,200,"RUNNING V"+version+" SCHEMA=1\n","text/plain; charset=utf-8");return;}
+      if(method.equals("GET")&&path.equals("/health")){text(x,200,"RUNNING V"+version+" SCHEMA="+store.platform.schemaVersion()+"\n","text/plain; charset=utf-8");return;}
       if(method.equals("GET")&&path.startsWith("/assets/")){asset(x,path);return;}
       if(method.equals("POST")&&path.equals("/login")){login(x);return;}
       session=auth.session(x);IdentityPages identity=new IdentityPages(version,session);

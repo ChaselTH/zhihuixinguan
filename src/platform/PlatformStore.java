@@ -13,6 +13,8 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
   public record LegacyItem(String key,BusinessRecord record,String sourceHash) {}
   public record AuditEvent(String at,String actor,String organization,String action,String recordId,String requestId,String before,String after) {}
   private final Connection db;
+  private final WorkflowEngine workflow;
+  private final java.util.function.Consumer<String> checkpoint;
   public record CreatedUser(UserAccount user,String initialPassword){}
   private static final Passwords.Encoded DUMMY=Passwords.encode(UUID.randomUUID().toString());
   public synchronized boolean hasUsers(){try(Statement st=db.createStatement();ResultSet rs=st.executeQuery("SELECT COUNT(*) FROM users")){rs.next();return rs.getInt(1)>0;}catch(SQLException e){throw failure(e);}}
@@ -61,7 +63,10 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
   private void insertUser(String id,String number,String name,Role role,String org,Passwords.Encoded hash)throws SQLException{exec("INSERT INTO users(id,auth_number,display_name,role,organization_id,active,password_hash,password_salt,must_change_password,revision) VALUES(?,?,?,?,?,TRUE,?,?,?,1)",id,number,name,role.name(),org,hash.hash(),hash.salt(),role!=Role.SUPER_ADMIN);}
   private static void validateUser(String number,String name,Role role,String org){if(number==null||!number.strip().matches("[0-9]{6,20}"))throw new IllegalArgumentException("统一认证号应为 6～20 位数字，保留前导零");if(name==null||name.strip().isEmpty()||name.strip().length()>100)throw new IllegalArgumentException("姓名需要 1～100 个字符");new ActorContext("validation",name,role,org);}
   private static String userSummary(UserAccount u){return Codec.encode(List.of(u.authNumber(),u.name(),u.role().name(),u.organizationId(),Boolean.toString(u.active())));}
-  public PlatformStore(Path dataRoot) throws Exception {
+  public PlatformStore(Path dataRoot) throws Exception { this(dataRoot,Clock.systemUTC(),point->{}); }
+  /** Package-private clock/fault seam for isolated tests; never configured through HTTP or environment. */
+  PlatformStore(Path dataRoot,Clock clock,java.util.function.Consumer<String> checkpoint) throws Exception {
+    this.checkpoint=Objects.requireNonNull(checkpoint);
     Path dir=dataRoot.toAbsolutePath().normalize().resolve("platform");
     Files.createDirectories(dir);
     if(Files.isSymbolicLink(dir))throw new IOException("数据目录不能是符号链接");
@@ -70,18 +75,13 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
     Class.forName("org.h2.Driver");
     db=DriverManager.getConnection("jdbc:h2:file:"+path+";DB_CLOSE_ON_EXIT=FALSE;LOCK_TIMEOUT=10000","sa","");
     try {initialize();}catch(Exception e){db.close();throw e;}
+    workflow=new WorkflowEngine(this,db,clock,checkpoint);
   }
+  public WorkflowContracts.WorkflowService workflow() { return workflow; }
+  public NotificationService notifications() { return workflow; }
+  public int schemaVersion() { return SchemaMigrations.CURRENT_VERSION; }
   private void initialize() throws Exception {
-    exec("CREATE TABLE IF NOT EXISTS schema_migrations(version INT PRIMARY KEY, checksum VARCHAR(64) NOT NULL, applied_at VARCHAR(40) NOT NULL)");
-    String sql;
-    try(InputStream in=PlatformStore.class.getResourceAsStream("/db/V001__foundation.sql")) {
-      if(in==null)throw new IOException("缺少数据库迁移资源");sql=new String(in.readAllBytes(),StandardCharsets.UTF_8);
-    }
-    try(Statement st=db.createStatement();ResultSet rs=st.executeQuery("SELECT version,checksum FROM schema_migrations ORDER BY version")) {
-      while(rs.next())if(rs.getInt(1)!=1||!Codec.hash(sql).equals(rs.getString(2)))throw new IOException("数据库版本或迁移校验不匹配；禁止使用旧程序覆盖新数据库");
-    }
-    for(String statement:sql.split(";"))if(!statement.isBlank())exec(statement);
-    exec("MERGE INTO schema_migrations KEY(version) VALUES(1,?,?)",Codec.hash(sql),Instant.now().toString());
+    SchemaMigrations.apply(db,checkpoint);
     exec("MERGE INTO organizations KEY(id) VALUES(?,?,NULL)",Organizations.DIVISION,"分行");
     exec("MERGE INTO organizations KEY(id) VALUES(?,?,?)",Organizations.UNASSIGNED,"待确认机构",Organizations.DIVISION);
     for(var e:Organizations.BRANCHES.entrySet())exec("MERGE INTO organizations KEY(id) VALUES(?,?,?)",e.getKey(),e.getValue(),Organizations.DIVISION);
@@ -113,22 +113,29 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
     return transaction(()->{
       currentIdentity(actor);
       String result=repeat(actor,requestId,payload);if(result!=null)return result;
-      Set<String> seen=new HashSet<>();String eventId=UUID.randomUUID().toString();
+      String eventId=UUID.randomUUID().toString();
+      applyOfficialChanges(actor,changes,AccessPolicy.Action.DIRECT_EDIT,"DIRECT_EDIT",requestId,"");
+      remember(actor,requestId,payload,eventId);return eventId;
+    });
+  }
+  /** Same connection and transaction as the caller; not a public workflow bypass. */
+  List<String> applyOfficialChanges(ActorContext actor,List<RecordChange> changes,AccessPolicy.Action capability,String action,String requestId,String details)throws SQLException {
+      Set<String> seen=new HashSet<>();List<String> auditIds=new ArrayList<>();
       for(RecordChange change:changes) {
         if(!seen.add(change.recordId()))throw new IllegalArgumentException("本次提交包含重复记录");
         BusinessRecord old=load(change.recordId(),true);
         if(old==null)throw new IllegalArgumentException("记录不存在");
-        AccessPolicy.require(actor,AccessPolicy.Action.DIRECT_EDIT,old.organizationId());
+        AccessPolicy.require(actor,capability,old.organizationId());
         if(old.version()!=change.expectedVersion())throw new ConcurrentModificationException("记录已被其他保存或导入更新，请刷新后核对；本次全部未保存");
         DatasetSchema schema=DatasetSchema.get(old.dataset());List<String> values=new ArrayList<>(old.values());
         for(var e:change.values().entrySet()){int index=schema.index(e.getKey());if(!schema.editable(index))throw new IllegalArgumentException("不允许修改来源字段");String value=e.getValue()==null?"":e.getValue().strip();if(value.equals(old.values().get(index)))continue;schema.validateEdit(index,e.getValue());values.set(index,value);}
         if(values.equals(old.values()))continue;
         String now=Instant.now().toString();
         exec("UPDATE official_records SET revision=revision+1,cell_data=?,updated_at=? WHERE id=?",Codec.encode(values),now,old.id());
-        audit(actor,old.organizationId(),old.id(),"DIRECT_EDIT",requestId,Codec.encode(old.values()),Codec.encode(values),"");
+        auditIds.add(audit(actor,old.organizationId(),old.id(),action,requestId,Codec.encode(old.values()),Codec.encode(values),details));
+        checkpoint.accept("official-row-written");
       }
-      remember(actor,requestId,payload,eventId);return eventId;
-    });
+      return List.copyOf(auditIds);
   }
   public synchronized ImportOutcome importRows(ActorContext actor,String dataset,List<BusinessRecord> incoming,boolean overwrite,String requestId) {
     return importRows(actor,dataset,incoming,overwrite,requestId,null);
@@ -218,8 +225,9 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
     Map<String,String> extras=new LinkedHashMap<>();String raw=rs.getString("legacy_extras");if(!raw.isEmpty()){List<String> a=Codec.decode(raw);for(int i=0;i+1<a.size();i+=2)extras.put(a.get(i),a.get(i+1));}
     return new BusinessRecord(rs.getString("id"),rs.getLong("revision"),rs.getString("dataset"),new Period(rs.getString("period_key"),rs.getDate("period_start").toLocalDate(),rs.getDate("period_end").toLocalDate()),rs.getString("organization_id"),Codec.decode(rs.getString("cell_data")),rs.getString("filename"),rs.getString("imported_at"),rs.getString("updated_at"),extras);
   }
-  private void audit(ActorContext a,String org,String record,String action,String request,String before,String after,String details)throws SQLException {
-    exec("INSERT INTO audit_events VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",UUID.randomUUID().toString(),Instant.now().toString(),a.userId(),a.name(),a.role().name(),org,record,action,request,before,after,details);
+  private String audit(ActorContext a,String org,String record,String action,String request,String before,String after,String details)throws SQLException {
+    String id=UUID.randomUUID().toString();
+    exec("INSERT INTO audit_events VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",id,Instant.now().toString(),a.userId(),a.name(),a.role().name(),org,record,action,request,before,after,details);return id;
   }
   private String repeat(ActorContext a,String request,String hash)throws SQLException {
     if(request==null||!request.matches("[A-Za-z0-9_-]{10,100}"))throw new IllegalArgumentException("请求编号无效，请刷新后重试");
@@ -232,6 +240,15 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
   private void remember(ActorContext a,String request,String hash,String result)throws SQLException{exec("INSERT INTO processed_requests VALUES(?,?,?,?)",request,a.userId(),hash,result);}
   private PreparedStatement statement(String sql,Object...args)throws SQLException {PreparedStatement st=db.prepareStatement(sql);for(int i=0;i<args.length;i++)st.setObject(i+1,args[i]);return st;}
   private void exec(String sql,Object...args)throws SQLException{try(PreparedStatement st=statement(sql,args)){st.executeUpdate();}}
+  @FunctionalInterface interface WorkflowWork<T>{T run()throws Exception;}
+  <T>T workflowTransaction(ActorContext actor,WorkflowWork<T> work) {
+    synchronized(this) {
+      return transaction(()->{currentIdentity(actor);return work.run();});
+    }
+  }
+  String workflowAudit(ActorContext actor,String org,String record,String action,String request,String before,String after,String details)throws SQLException {
+    return audit(actor,org,record,action,request,before,after,details);
+  }
   @FunctionalInterface private interface Work<T>{T run()throws Exception;}
   private <T>T transaction(Work<T> work){try{db.setAutoCommit(false);try{T result=work.run();db.commit();return result;}catch(Exception e){db.rollback();if(e instanceof RuntimeException r)throw r;throw new IllegalStateException(e);}finally{db.setAutoCommit(true);}}catch(SQLException e){throw failure(e);}}
   private static IllegalStateException failure(SQLException e){return new IllegalStateException("数据库处理失败，未确认的更改不会生效",e);}

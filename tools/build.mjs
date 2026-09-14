@@ -5,6 +5,10 @@ import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+const sourceRevision=spawnSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8',windowsHide:true});
+const sourceStatus=spawnSync('git',['status','--porcelain','--untracked-files=normal'],{cwd:root,encoding:'utf8',windowsHide:true});
+const sourceCommit=sourceRevision.status===0?sourceRevision.stdout.trim():null;
+const sourceDirty=sourceStatus.status!==0||sourceStatus.stdout.trim().length>0;
 const args=process.argv.slice(2), caches=[];
 for(let i=0;i<args.length;i++)if(args[i]==='--cache')caches.push(path.resolve(args[++i]));
 const hash=b=>createHash('sha256').update(b).digest('hex');
@@ -48,6 +52,8 @@ if(args.includes('--test')){
   run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'HttpSmokeTest',app]);
   run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'IdentityTest']);
   run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'BootstrapTest',app]);
+  run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'xinguan.platform.WorkflowPlatformTest']);
+  run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'WorkflowReadModelTest']);
 }
-await fs.writeFile(path.join(build,'foundation-build.json'),JSON.stringify({version:(await fs.readFile(path.join(root,'VERSION'),'utf8')).trim(),app,jar,classpath:runtimeCp},null,2));
+await fs.writeFile(path.join(build,'foundation-build.json'),JSON.stringify({version:(await fs.readFile(path.join(root,'VERSION'),'utf8')).trim(),sourceCommit,sourceDirty,app,jar,classpath:runtimeCp},null,2));
 console.log('BUILD_OK '+app);
