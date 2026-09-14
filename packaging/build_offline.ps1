@@ -15,6 +15,10 @@ if (-not $appPath.StartsWith($expectedBuildRoot+[IO.Path]::DirectorySeparatorCha
 if ((Get-Item -LiteralPath $appPath).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Application output must not be a link' }
 $version=(Get-Content -LiteralPath (Join-Path $projectRoot 'VERSION') -Raw).Trim()
 if ($build.version -ne $version) { throw 'Build version is stale; rebuild first' }
+$sourceCommit=(& git -C $projectRoot rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-f]{40}$' -or $build.sourceCommit -ne $sourceCommit -or $build.sourceDirty) { throw 'Build source revision is stale or dirty; commit and rebuild before packaging' }
+$sourceChanges=@(& git -C $projectRoot status --porcelain --untracked-files=normal)
+if ($LASTEXITCODE -ne 0 -or $sourceChanges.Count -ne 0) { throw 'Source worktree must be clean before packaging' }
 $privateBootstrapPath=''
 if (-not [string]::IsNullOrWhiteSpace($BootstrapConfig)) {
     $privateBootstrapPath=(Resolve-Path -LiteralPath $BootstrapConfig).Path
@@ -40,7 +44,8 @@ if ($privateBootstrapPath) {
 }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'install.sh') -Destination $bundle
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\PR0-安装测试说明.md') -Destination (Join-Path $bundle '安装测试说明.md')
-Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\PR0.6-本地初始化测试.md') -Destination (Join-Path $bundle '测试记录.md')
+Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\PR0.7-合并测试记录.md') -Destination (Join-Path $bundle '测试记录.md')
+[IO.File]::WriteAllText((Join-Path $bundle 'SOURCE_COMMIT'),$sourceCommit+"`n",[Text.UTF8Encoding]::new($false))
 Copy-Item -LiteralPath (Join-Path $projectRoot 'THIRD_PARTY_NOTICES.md') -Destination $bundle
 $checks=@()
 foreach ($file in (Get-ChildItem -LiteralPath $payload -File | Sort-Object Name)) { $checks+="{0}  payload/{1}" -f (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant(),$file.Name }
