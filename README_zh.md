@@ -32,7 +32,7 @@ cd "$HOME/ZhihuiXinguan-PR0"
 
 ## 开发及安全边界
 
-JDK 17+、Node 22+：`node tools/build.mjs --test`；已有依赖时加 `--offline`。依赖版本和哈希见 dependencies.lock.json。后续双 AI 开发约定见 `docs/foundation-contracts.md`。
+JDK 17+、Node 22+：`node tools/build.mjs --test`；已有依赖时加 `--offline`。依赖版本和哈希见 dependencies.lock.json。后续双 AI 开发约定见 [公共接口与分工](docs/foundation-contracts.md) 和 [B1 工作流就绪清单](docs/B1-工作流就绪清单.md)：先将公共基础和公共事务补丁分别合入 main，再从同一提交并行。main 是共同开发基线，不等于实机验收通过的发布包。
 
 网页不加载外网资源，无大模型调用。密码用加盐 PBKDF2 哈希，管理及保存带会话与 CSRF 校验，数据库不开放远程服务。HTTP 不提供传输加密，仅在获准隔离内网测试；正式多用户部署需按单位要求核验传输安全。旧 IE 可分批或使用第二个文件框上传；麒麟／Win7 IE 实机兼容须由测试确认。
 
