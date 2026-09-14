@@ -1,0 +1,89 @@
+{
+  "schema": 1,
+  "dependencies": [
+    {
+      "group": "commons-codec",
+      "artifact": "commons-codec",
+      "version": "1.21.0",
+      "sha256": "4da851cb6abfb98bfe9eb77c5e5fc47f5414fa28b94e21b7fd9a646705dc167f"
+    },
+    {
+      "group": "org.apache.commons",
+      "artifact": "commons-collections4",
+      "version": "4.5.0",
+      "sha256": "00f93263c267be201b8ae521b44a7137271b16688435340bf629db1bac0a5845"
+    },
+    {
+      "group": "org.apache.commons",
+      "artifact": "commons-compress",
+      "version": "1.28.0",
+      "sha256": "e1522945218456f3649a39bc4afd70ce4bd466221519dba7d378f2141a4642ca"
+    },
+    {
+      "group": "commons-io",
+      "artifact": "commons-io",
+      "version": "2.21.0",
+      "sha256": "7d643a2afea8b058b762aa6fb90e5b256f6c729739f8b3784c3370ddc609e88d"
+    },
+    {
+      "group": "org.apache.commons",
+      "artifact": "commons-math3",
+      "version": "3.6.1",
+      "sha256": "1e56d7b058d28b65abd256b8458e3885b674c1d588fa43cd7d1cbb9c7ef2b308"
+    },
+    {
+      "group": "com.github.virtuald",
+      "artifact": "curvesapi",
+      "version": "1.08",
+      "sha256": "ad95b08b8bbf9d7d17e5e00814898fa23324f32bc5b62f1a37801e6a56ce0079"
+    },
+    {
+      "group": "org.apache.logging.log4j",
+      "artifact": "log4j-api",
+      "version": "2.25.4",
+      "sha256": "c4b642a7f047275215de117e0e3847eb2c7711d84a0aa7433e7b3c096daf341d"
+    },
+    {
+      "group": "org.apache.logging.log4j",
+      "artifact": "log4j-core",
+      "version": "2.25.4",
+      "sha256": "10fee2c0485d54fa44ee75d314f6295508f7b932281873db61a91b88073200e6"
+    },
+    {
+      "group": "org.apache.poi",
+      "artifact": "poi",
+      "version": "5.5.1",
+      "sha256": "6c52e876ca75775a11b56e4b36a7541f682827f56406725fcd87560b792ee3d8"
+    },
+    {
+      "group": "org.apache.poi",
+      "artifact": "poi-ooxml",
+      "version": "5.5.1",
+      "sha256": "bd7be2fdfe3fd2c1684fa813351c2798fd636b44f6236e0674500d4f8ff1c2f9"
+    },
+    {
+      "group": "org.apache.poi",
+      "artifact": "poi-ooxml-lite",
+      "version": "5.5.1",
+      "sha256": "e6e37adeb6d6ee8b40ec491ad955d934d8f99827ab050f105b18286e59b1d9e7"
+    },
+    {
+      "group": "com.zaxxer",
+      "artifact": "SparseBitSet",
+      "version": "1.3",
+      "sha256": "f76b85adb0c00721ae267b7cfde4da7f71d3121cc2160c9fc00c0c89f8c53c8a"
+    },
+    {
+      "group": "org.apache.xmlbeans",
+      "artifact": "xmlbeans",
+      "version": "5.3.0",
+      "sha256": "6cc69da3b4d35b83c5e477cd4daba204e44109833e34af2b9a8a2c8788289917"
+    },
+    {
+      "group": "com.h2database",
+      "artifact": "h2",
+      "version": "2.5.250",
+      "sha256": "82a80a2ac06901b03cdb233c663d21c4f49c884bf6d0cf85022729e8db9ab86f"
+    }
+  ]
+}

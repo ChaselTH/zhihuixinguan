@@ -1,12 +1,18 @@
 # Build and release outputs
 /build/
 /dist/
+/vendor/
 *.class
 *.jar
 *.tar.gz
 
 # Runtime and imported business data
 /data/
+*.mv.db
+*.trace.db
+*.lock.db
+auth.properties
+bootstrap.local.properties
 /表格/
 *.et
 *.xls

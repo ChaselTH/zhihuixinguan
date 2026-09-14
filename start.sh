@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VERSION="$(tr -d '\r\n' < "$APP_DIR/VERSION")"
@@ -53,19 +54,22 @@ chmod 700 "$APP_DIR/run" "$APP_DIR/data" 2>/dev/null || true
 
 cleanup() {
   local code=$?
-  if [[ -f "$PID_FILE" ]]; then
-    rm -f -- "$PID_FILE"
+  trap - EXIT
+  if [[ -n "${JAVA_PID:-}" && -f "$PID_FILE" && ! -L "$PID_FILE" ]]; then
+    local recorded_pid=""
+    IFS= read -r recorded_pid < "$PID_FILE" || true
+    if [[ "$recorded_pid" == "$JAVA_PID" ]]; then rm -- "$PID_FILE"; fi
   fi
   echo
   echo "服务状态：已停止"
   exit "$code"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
 echo
 echo "智慧信管 V$VERSION"
 echo "服务状态：启动中"
 echo "首页：http://127.0.0.1:$PORT"
-echo "管理入口：http://127.0.0.1:$PORT/admin"
+echo "登录入口：http://127.0.0.1:$PORT/login"
 echo "局域网访问：http://<这台麒麟电脑的IP>:$PORT"
 echo
 
@@ -77,5 +81,10 @@ echo
 JAVA_PID=$!
 printf '%s\n' "$JAVA_PID" > "$PID_FILE"
 chmod 600 "$PID_FILE" 2>/dev/null || true
-trap 'kill -TERM "$JAVA_PID" 2>/dev/null || true' INT TERM
+stop_child() {
+  trap '' INT TERM
+  kill -TERM "$JAVA_PID" 2>/dev/null || true
+  wait "$JAVA_PID" || true
+}
+trap stop_child INT TERM
 wait "$JAVA_PID"
