@@ -64,8 +64,10 @@ public final class HttpSmokeTest {
       String token=hidden(preview.body()).get("token");check(post("/imports/confirm",Map.of("csrf",csrf,"token",token,"mode","preserve")).statusCode()==303,"confirm import");
       String details=get("/details?dataset=multi&month=2026-09").body();check(details.contains("虚构测试企业 HTTP"),"imported row visible");
       Map<String,String> fields=hidden(details);DatasetSchema schema=DatasetSchema.get("multi");for(int c=0;c<schema.width();c++)if(schema.editable(c))fields.put("v0_"+c,c==17?"HTTP 虚构反馈 <script>test</script>":"");
-      check(post("/update-batch",fields).statusCode()==303,"single yellow cell saved");
-      check(post("/update-batch",fields).statusCode()==303,"same browser save request is idempotent");
+      var editPreview=post("/update-batch",fields);check(editPreview.statusCode()==200,"legacy editor now previews before publishing");
+      check(!get("/details?dataset=multi&month=2026-09").body().contains("HTTP 虚构反馈"),"legacy editor cannot bypass confirmation");
+      var confirmation=hidden(editPreview.body());check(post("/workflow/confirm",confirmation).statusCode()==200,"confirmed yellow cell saved");
+      check(post("/workflow/confirm",confirmation).statusCode()==200,"same confirmation request is idempotent");
       String completed=get("/details?dataset=multi&month=2026-09").body();check(completed.contains("row-complete"),"row completion color");check(completed.contains("&lt;script&gt;test&lt;/script&gt;"),"saved text html escaped");
       check(!get("/?month=2026-09").body().contains("虚构测试企业 HTTP"),"completed row excluded from homepage pending list");
       check(get("/export?dataset=multi&month=2026-09").statusCode()==200,"authenticated export");
@@ -74,7 +76,7 @@ public final class HttpSmokeTest {
       check(post("/imports/confirm",Map.of("csrf",csrf,"token",hidden(again.body()).get("token"),"mode","preserve")).statusCode()==303,"preserve duplicate");
       check(get("/details?dataset=multi&month=2026-09").body().contains("HTTP 虚构反馈"),"duplicate preserved feedback");
       var stalePreview=upload("multi",multi,csrf);Map<String,String> next=hidden(get("/details?dataset=multi&month=2026-09").body());for(int c=0;c<schema.width();c++)if(schema.editable(c))next.put("v0_"+c,c==17?"另一次虚构保存":"");
-      check(post("/update-batch",next).statusCode()==303,"newer save before import confirm");
+      check(post("/workflow/confirm",hidden(post("/update-batch",next).body())).statusCode()==200,"newer confirmed save before import confirm");
       check(post("/imports/confirm",Map.of("csrf",csrf,"token",hidden(stalePreview.body()).get("token"),"mode","overwrite","confirmOverwrite","yes")).statusCode()==409,"stale preview cannot overwrite");
       fields.put("requestId",UUID.randomUUID().toString());check(post("/update-batch",fields).statusCode()==409,"stale editor rejected");
       for(String type:List.of("negative","cross")){var p=upload(type,workbook(type),csrf);check(p.statusCode()==200,"other module preview");check(post("/imports/confirm",Map.of("csrf",csrf,"token",hidden(p.body()).get("token"),"mode","preserve")).statusCode()==303,"other module committed");}
@@ -100,6 +102,7 @@ public final class HttpSmokeTest {
       client=newClient();loginAndChange("900000005",reviewer.password());HttpClient reviewerClient=client;
       check(get("/details?dataset=multi&month=2026-09").body().contains("保存资料补充"),"reviewer may directly fill own branch");
       AccessHttpTest.run(superClient,divisionClient,branchClient,operatorClient);
+      WorkflowIntegrationHttpTest.run(superClient,divisionClient,branchClient,operatorClient,reviewerClient);
       client=superClient;
       Map<String,String> editReviewer=hidden(get("/people/edit?id="+reviewer.id()).body());editReviewer.put("name","已转金坛");editReviewer.put("role","OPERATOR");editReviewer.put("organization","JINTAN");editReviewer.put("active","true");
       check(post("/people/update",editReviewer).statusCode()==303,"super changes role and organization");
@@ -139,6 +142,7 @@ public final class HttpSmokeTest {
   }
   static void ackSafety()throws Exception {
     check(get("/export?dataset=multi").headers().firstValue("location").orElse("").equals("/security"),"new session must acknowledge safety before export");
+    check(get("/workflow").headers().firstValue("location").orElse("").equals("/security"),"workflow also requires per-login safety acknowledgement");
     Map<String,String> fields=hidden(get("/security").body());
     check(post("/security/ack",Map.of("csrf","forged","noticeVersion",AccessPlatform.SAFETY_VERSION)).statusCode()==403,"safety requires csrf");
     check(post("/security/ack",Map.of("csrf",fields.get("csrf"),"noticeVersion","obsolete")).statusCode()==400,"stale notice version rejected");

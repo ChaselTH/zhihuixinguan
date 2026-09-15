@@ -113,12 +113,22 @@ public final class AccessPlatform {
     synchronized(store) {notice(a,noticeId);return call(a,()->{String id=scalar("SELECT request_id FROM access_notification_links WHERE event_id=?",noticeId);if(id==null)return "";visible(a,load(id));return id;});}
   }
   public List<AuditEntry> audit(ActorContext a,AuditFilter filter,int offset,int limit) {
+    return auditQuery(a,filter,offset,limit,"");
+  }
+  public List<AuditEntry> auditForSubmission(ActorContext a,String submissionId,AuditFilter filter,int offset,int limit) {
+    synchronized(store) {
+      store.workflow().submission(a,submissionId);
+      return auditQuery(a,filter,offset,limit,submissionId);
+    }
+  }
+  private List<AuditEntry> auditQuery(ActorContext a,AuditFilter filter,int offset,int limit,String submissionId) {
     return call(a,()->{
       page(offset,limit);boolean security="security".equals(filter.category());
       if(security&&!PlatformStore.isManager(a))throw new SecurityException("没有账号管理记录查看权限");
       if(filter.from()!=null&&filter.through()!=null&&filter.from().isAfter(filter.through()))throw new IllegalArgumentException("开始日期不能晚于结束日期");
       String sql="SELECT e.*,o.dataset,o.cell_data,w.submission_id FROM audit_events e LEFT JOIN official_records o ON o.id=e.record_id LEFT JOIN workflow_audit_links w ON w.event_id=e.id WHERE 1=1";
       List<Object> args=new ArrayList<>();
+      if(!submissionId.isEmpty()){sql+=" AND w.submission_id=?";args.add(submissionId);}
       String types="(e.action LIKE 'USER_%' OR e.action LIKE 'PASSWORD_%' OR e.action LIKE 'ACCESS_%' OR e.action LIKE 'SECURITY_%' OR e.action LIKE 'NOTICE_%')";
       sql+=" AND "+(security?types:"NOT "+types+" AND e.action<>'DRAFT_SAVE'");
       if(!AccessPolicy.all(a)){sql+=" AND e.organization_id=?";args.add(a.organizationId());if(security){sql+=" AND e.actor_id=?";args.add(a.userId());}}
