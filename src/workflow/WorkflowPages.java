@@ -16,9 +16,9 @@ final class WorkflowPages extends PageLayout {
     if(actor.role()==Role.OPERATOR)b.append("<a class=\"btn btn-primary\" href=\"/workflow/edit?dataset=multi\">开始或继续填报</a>");
     else if(canDirect(actor))b.append("<a class=\"btn btn-primary\" href=\"/workflow/edit?dataset=multi\">预览直接修改</a>");
     b.append("</div><div class=\"workflow-metrics clearfix\">")
-      .append(metric("私人草稿",drafts.size(),actor.role()==Role.OPERATOR?"仅本人可见":"当前角色不使用草稿"))
+      .append(metric("最近草稿",drafts.size(),actor.role()==Role.OPERATOR?"最多显示 10 条；全部草稿见列表":"当前角色不使用草稿"))
       .append(metric("近期提交",submissions.size(),"正式快照与状态"))
-      .append(metric("复核待办",pending.size(),actor.role()==Role.REVIEWER?"已读不会移除待办":"仅复核员处理"))
+      .append(metric("近期复核待办",pending.size(),actor.role()==Role.REVIEWER?"全部待办请打开复核列表":"仅复核员处理"))
       .append("</div>");
     if(actor.role()==Role.OPERATOR)b.append(draftPanel(drafts));
     if(actor.role()==Role.REVIEWER)b.append(submissionPanel("本支行复核待办",pending,true));
@@ -33,7 +33,7 @@ final class WorkflowPages extends PageLayout {
     b.append("<div class=\"workflow-title clearfix\"><div><span class=\"workflow-eyebrow\">").append(draftMode?"PRIVATE DRAFT":"DIRECT CHANGE").append("</span><h1>").append(draftMode?"填报草稿":"本人直接修改").append(" · ").append(e(schema.label)).append("</h1><p>")
       .append(draftMode?"草稿正文仅本人可见；保存的是完整差异集合，切换分页不会丢失已保存修改。":"确认前只生成服务端差异；正式值尚未改变。").append("</p></div>");
     if(draft!=null)b.append("<div class=\"workflow-version\"><span>草稿版本</span><strong>").append(draft.version()).append("</strong><small>").append(saved.size()).append(" 条差异记录</small></div>");
-    b.append("</div>").append(editorFilter(dataset,organization,from,through,draft));
+    b.append("</div>").append(editorFilter(dataset,organization,from,through,draft,prior));
     if(organization.isEmpty()){b.append(empty("请选择支行后查看可编辑正式记录。"));return shell("工作流编辑","edit",b.toString());}
     if(!prior.isEmpty())b.append("<div class=\"workflow-callout warning\">本草稿将关联已退回单 <a href=\"/workflow/submission?id=").append(u(prior)).append("\">").append(e(shortId(prior))).append("</a>，重新提交会创建新单并保留旧单历史。</div>");
     b.append("<form class=\"workflow-edit-form\" method=\"post\" action=\"").append(draftMode?"/workflow/draft/save":"/workflow/direct/preview").append("\">")
@@ -61,6 +61,14 @@ final class WorkflowPages extends PageLayout {
     b.append("</tbody></table></div></form>");
     b.append(pager(editLink(dataset,organization,from,through,draft==null?"":draft.id(),prior),page,pages,total));
     return shell(draftMode?"填报草稿":"直接修改","edit",b.toString());
+  }
+
+  String drafts(List<Draft> rows,String dataset,int page) {
+    StringBuilder b=new StringBuilder("<h1>我的全部草稿</h1><p>草稿正文仅本人可见。按表种筛选后可翻页恢复历史草稿。</p><form class=\"workflow-filter\" method=\"get\" action=\"/workflow/drafts\"><label>表种<select name=\"dataset\">").append(option("","全部表种",dataset));
+    for(var schema:DatasetSchema.all())b.append(option(schema.id,schema.label,dataset));
+    b.append("</select></label><button class=\"btn btn-dark\" type=\"submit\">查看</button></form>").append(draftPanel(rows));
+    b.append(pager("/workflow/drafts?dataset="+u(dataset),page,page+(rows.size()==30?1:0),-1));
+    return shell("我的全部草稿","drafts",b.toString());
   }
 
   String preview(Preview preview,String notice) {
@@ -95,7 +103,7 @@ final class WorkflowPages extends PageLayout {
         .append("<form method=\"post\" action=\"/workflow/review/reject\" class=\"workflow-review-card reject\">").append(hidden("csrf",session.csrf)).append(hidden("submissionId",submission.id())).append(hidden("requestId",requestId("reject",submission.id()))).append("<h2>退回修改</h2><label>退回原因（必填）<textarea name=\"reason\" rows=\"4\" maxlength=\"2000\"></textarea></label><button class=\"btn btn-light\" type=\"submit\">确认退回</button></form></div>");
     }
     if(submission.state()==State.RETURNED&&submission.ownerId().equals(session.actor.userId())&&!submission.draftId().isEmpty())b.append("<div class=\"workflow-next\"><a class=\"btn btn-primary\" href=\"/workflow/edit?dataset=").append(u(submission.dataset())).append("&amp;draft=").append(u(submission.draftId())).append("&amp;prior=").append(u(submission.id())).append("\">恢复草稿并修订</a></div>");
-    if(submission.state()!=State.SUBMITTED)b.append("<p class=\"workflow-audit-link\"><a href=\"/audit?submissionId=").append(u(submission.id())).append("\">查看公共审计记录</a> <span>（由 A1 提供入口并继续校验权限）</span></p>");
+    if(submission.state()!=State.SUBMITTED)b.append("<p class=\"workflow-audit-link\"><a href=\"/audit?submissionId=").append(u(submission.id())).append("\">查看公共审计记录</a> <span>（按当前账号权限查询）</span></p>");
     return shell("提交详情","submission",b.toString());
   }
 
@@ -113,31 +121,32 @@ final class WorkflowPages extends PageLayout {
     StringBuilder content=new StringBuilder(header()).append("<div class=\"workflow-shell\"><div class=\"workflow-nav clearfix\"><div><strong>工作流</strong><span>").append(e(PageLayout.roleName(session.actor.role()))).append(" · ").append(e(Organizations.label(session.actor.organizationId()))).append("</span></div><div class=\"workflow-tabs\">")
       .append(tab("/workflow","工作台","home",active));
     if(session.actor.role()==Role.OPERATOR||canDirect(session.actor))content.append(tab("/workflow/edit?dataset=multi",session.actor.role()==Role.OPERATOR?"草稿填报":"直接修改","edit",active));
+    if(session.actor.role()==Role.OPERATOR)content.append(tab("/workflow/drafts","全部草稿","drafts",active));
     content.append(tab("/workflow/submissions",session.actor.role()==Role.OPERATOR?"我的提交":"提交记录","submissions",active));
     if(session.actor.role()==Role.REVIEWER)content.append(tab("/workflow/reviews","复核待办","reviews",active));
     content.append("</div></div>").append(body).append("</div>");
     String html=page(title,content.toString());return html.replace("<link rel=\"stylesheet\" href=\"/assets/foundation.css\">","<link rel=\"stylesheet\" href=\"/assets/foundation.css\"><link rel=\"stylesheet\" href=\"/assets/workflow.css\">");
   }
 
-  private String editorFilter(String dataset,String organization,LocalDate from,LocalDate through,Draft draft) {
+  private String editorFilter(String dataset,String organization,LocalDate from,LocalDate through,Draft draft,String prior) {
     StringBuilder b=new StringBuilder("<form class=\"workflow-filter clearfix\" method=\"get\" action=\"/workflow/edit\"><label>表种<select name=\"dataset\">");for(DatasetSchema s:DatasetSchema.all())b.append(option(s.id,s.label,dataset));b.append("</select></label>");
     if(session.actor.role()==Role.DIVISION_ADMIN){b.append("<label>支行<select name=\"organization\">").append(option("","请选择支行",organization));for(var entry:Organizations.BRANCHES.entrySet())b.append(option(entry.getKey(),entry.getValue(),organization));b.append("</select></label>");}
     else b.append(hidden("organization",organization)).append("<label>机构<span class=\"workflow-readonly\">").append(e(Organizations.label(organization))).append("</span></label>");
     b.append("<label>开始日期<input name=\"from\" value=\"").append(e(from==null?"":from.toString())).append("\" placeholder=\"YYYY-MM-DD\"></label><label>结束日期<input name=\"through\" value=\"").append(e(through==null?"":through.toString())).append("\" placeholder=\"YYYY-MM-DD\"></label>");
-    if(draft!=null)b.append(hidden("draft",draft.id()));b.append("<button class=\"btn btn-dark\" type=\"submit\">查看正式记录</button></form>");return b.toString();
+    if(draft!=null)b.append(hidden("draft",draft.id()));if(!prior.isEmpty())b.append(hidden("prior",prior));b.append("<button class=\"btn btn-dark\" type=\"submit\">查看正式记录</button></form>");return b.toString();
   }
 
   private String submissionFilter(String dataset,String organization,State state,LocalDate from,LocalDate through,boolean mine,boolean pending) {
     String action=pending?"/workflow/reviews":"/workflow/submissions";StringBuilder b=new StringBuilder("<form class=\"workflow-filter clearfix\" method=\"get\" action=\"").append(action).append("\"><label>表种<select name=\"dataset\">").append(option("","全部表种",dataset));for(DatasetSchema s:DatasetSchema.all())b.append(option(s.id,s.label,dataset));b.append("</select></label>");
     if(AccessPolicy.all(session.actor)){b.append("<label>支行<select name=\"organization\">").append(option("","全部支行",organization));for(var entry:Organizations.BRANCHES.entrySet())b.append(option(entry.getKey(),entry.getValue(),organization));b.append("</select></label>");}
-    if(!pending)b.append("<label>状态<select name=\"state\">").append(option("","全部状态",state==null?"":state.name()));for(State candidate:State.values())b.append(option(candidate.name(),stateLabel(candidate),state==null?"":state.name()));b.append("</select></label>");
+    if(!pending){b.append("<label>状态<select name=\"state\">").append(option("","全部状态",state==null?"":state.name()));for(State candidate:State.values())b.append(option(candidate.name(),stateLabel(candidate),state==null?"":state.name()));b.append("</select></label>");}
     b.append("<label>开始日期<input name=\"from\" value=\"").append(e(from==null?"":from.toString())).append("\" placeholder=\"YYYY-MM-DD\"></label><label>结束日期<input name=\"through\" value=\"").append(e(through==null?"":through.toString())).append("\" placeholder=\"YYYY-MM-DD\"></label>");
     if(session.actor.role()!=Role.OPERATOR&&!pending)b.append("<label class=\"workflow-check\"><input type=\"checkbox\" name=\"mine\" value=\"1\"").append(mine?" checked=\"checked\"":"").append("> 只看本人提交</label>");
     b.append("<button class=\"btn btn-dark\" type=\"submit\">筛选</button></form>");return b.toString();
   }
 
   private String draftPanel(List<Draft> drafts) {
-    StringBuilder b=new StringBuilder("<section class=\"workflow-panel\"><div class=\"workflow-panel-head clearfix\"><div><span>PRIVATE</span><h2>我的草稿</h2></div><a href=\"/workflow/edit?dataset=multi\">新建草稿</a></div><div class=\"workflow-list\">");
+    StringBuilder b=new StringBuilder("<section class=\"workflow-panel\"><div class=\"workflow-panel-head clearfix\"><div><span>PRIVATE</span><h2>我的草稿</h2></div><a href=\"/workflow/drafts\">查看全部草稿</a> <a href=\"/workflow/edit?dataset=multi\">新建草稿</a></div><div class=\"workflow-list\">");
     for(Draft draft:drafts)b.append("<a class=\"workflow-list-row clearfix\" href=\"/workflow/edit?dataset=").append(u(draft.dataset())).append("&amp;draft=").append(u(draft.id())).append("\"><span class=\"workflow-list-main\"><strong>").append(e(DatasetSchema.get(draft.dataset()).label)).append("</strong><small>").append(draft.rows().size()).append(" 条差异 · 版本 ").append(draft.version()).append(" · ").append(e(dateTime(draft.updatedAt()))).append("</small></span><em>继续编辑</em></a>");
     if(drafts.isEmpty())b.append(empty("尚无私人草稿。"));return b.append("</div></section>").toString();
   }

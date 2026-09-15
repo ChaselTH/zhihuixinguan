@@ -26,11 +26,17 @@ final class WorkflowRoutes {
 
   boolean get(HttpExchange x,AuthService.Session session,Map<String,String> query)throws Exception {
     String path=x.getRequestURI().getPath();
-    if(!Set.of("/workflow","/workflow/edit","/workflow/preview","/workflow/submissions","/workflow/reviews","/workflow/submission").contains(path))return false;
+    if(!Set.of("/workflow","/workflow/drafts","/workflow/edit","/workflow/preview","/workflow/submissions","/workflow/reviews","/workflow/submission").contains(path))return false;
     WorkflowPages pages=pages(session);
     try {
       switch(path) {
         case "/workflow" -> send(x,200,home(pages,session,query));
+        case "/workflow/drafts" -> {
+          if(session.actor.role()!=Role.OPERATOR)throw new SecurityException("只有操作员可以查看本人私人草稿");
+          String dataset=clean(query.get("dataset"));if(!dataset.isEmpty())DatasetSchema.get(dataset);
+          int page=positivePage(query.get("page"));
+          send(x,200,pages.drafts(workflow.drafts(session.actor,empty(dataset),(page-1)*LIST_PAGE_SIZE,LIST_PAGE_SIZE),dataset,page));
+        }
         case "/workflow/edit" -> send(x,200,editor(pages,session,query));
         case "/workflow/preview" -> send(x,200,pages.preview(workflow.preview(session.actor,required(query,"id")),notice(query)));
         case "/workflow/submissions" -> send(x,200,submissions(pages,session,query,false));
@@ -183,6 +189,7 @@ final class WorkflowRoutes {
       AccessPolicy.require(actor,AccessPolicy.Action.DIRECT_EDIT,org);return org;
     }
     if(!Organizations.BRANCHES.containsKey(actor.organizationId()))throw new SecurityException("当前账号没有可填写的支行");
+    if(!clean(requested).isEmpty()&&!actor.organizationId().equals(clean(requested)))throw new SecurityException("不能选择其他支行的填报数据");
     AccessPolicy.require(actor,actor.role()==Role.OPERATOR?AccessPolicy.Action.SAVE_DRAFT:AccessPolicy.Action.DIRECT_EDIT,actor.organizationId());
     return actor.organizationId();
   }

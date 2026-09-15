@@ -9,10 +9,11 @@ import xinguan.platform.*;
 
 public final class Main extends HttpSupport {
   private final Path root;private final DataStore store;private final AuthService auth;private final String version;
+  private final WorkflowRoutes workflow;
   private final WorkbookImporter importer=new WorkbookImporter();private final ExcelExporter exporter=new ExcelExporter();
   private final Map<String,PendingImport> pending=new ConcurrentHashMap<>();
   private record PendingImport(String sessionToken,String dataset,List<BusinessRecord> rows,String baseline,long expires){}
-  private Main(Path root,Path data)throws Exception{this.root=root.toAbsolutePath().normalize();store=new DataStore(data);try{BootstrapConfig.initialize(store.platform,this.root.resolve(BootstrapConfig.FILE_NAME));auth=new AuthService(store.platform);version=readVersion(root);}catch(Exception e){store.close();throw e;}}
+  private Main(Path root,Path data)throws Exception{this.root=root.toAbsolutePath().normalize();store=new DataStore(data);try{BootstrapConfig.initialize(store.platform,this.root.resolve(BootstrapConfig.FILE_NAME));auth=new AuthService(store.platform);version=readVersion(root);workflow=new WorkflowRoutes(store.platform,version);}catch(Exception e){store.close();throw e;}}
   public static void main(String[] args)throws Exception {
     Map<String,String> options=arguments(args);Path root=Path.of(options.getOrDefault("root",".")).toAbsolutePath().normalize();Path data=Path.of(options.getOrDefault("data-root",root.resolve("data").toString()));
     if(options.containsKey("migrate-only")){try(DataStore s=new DataStore(data)){System.out.println("数据库检查及迁移完成："+s.platform.diagnostics());}return;}
@@ -47,12 +48,13 @@ public final class Main extends HttpSupport {
       Map<String,String> q=query(x.getRequestURI());
       ImportPages imports=new ImportPages(version,session);
       if(method.equals("GET")){
+        if(workflow.get(x,session,q))return;
         if(path.equals("/security")){sendHtml(x,200,access.safety());return;}
         if(path.equals("/access/requests")){boolean only=!"yes".equals(q.get("all"));int offset=integer(q.get("offset"),0);sendHtml(x,200,access.applications(store.platform.access().applications(session.actor,only,offset,25),only,offset));return;}
         if(path.equals("/access/request")){var request=store.platform.access().application(session.actor,q.get("id"));sendHtml(x,200,access.application(request,store.platform.access().canDecide(session.actor,request)));return;}
         if(path.equals("/notifications")){boolean unread="yes".equals(q.get("unread"));int offset=integer(q.get("offset"),0);sendHtml(x,200,new NotificationPages(version,session).inbox(store.platform.notifications().inbox(session.actor,unread,offset,25),unread,offset));return;}
         if(path.equals("/notifications/detail")){var notice=store.platform.access().notice(session.actor,q.get("id"));sendHtml(x,200,new NotificationPages(version,session).detail(notice,store.platform.access().noticeApplication(session.actor,notice.id())));return;}
-        if(path.equals("/audit")){int offset=integer(q.get("offset"),0);var filter=new AccessPlatform.AuditFilter(q.get("category"),q.get("organization"),q.get("dataset"),q.get("search"),auditDate(q.get("from")),auditDate(q.get("through")));sendHtml(x,200,new AuditPages(version,session).audit(store.platform.access().audit(session.actor,filter,offset,25),q,offset));return;}
+        if(path.equals("/audit")){int offset=integer(q.get("offset"),0);var filter=new AccessPlatform.AuditFilter(q.get("category"),q.get("organization"),q.get("dataset"),q.get("search"),auditDate(q.get("from")),auditDate(q.get("through")));String submissionId=limit(q.get("submissionId"),80);var rows=submissionId.isEmpty()?store.platform.access().audit(session.actor,filter,offset,25):store.platform.access().auditForSubmission(session.actor,submissionId,filter,offset,25);sendHtml(x,200,new AuditPages(version,session).audit(rows,q,offset));return;}
         if(path.equals("/login")){redirect(x,"/");return;}
         if(path.equals("/account/password")){if(auth.passwordChangeExpired(session)){passwordRelogin(x);return;}sendHtml(x,200,identity.password(""));return;}
         if(path.startsWith("/people")){if(!PlatformStore.isManager(session.actor))throw new SecurityException("没有人员管理权限");
@@ -73,6 +75,7 @@ public final class Main extends HttpSupport {
       if(method.equals("POST")&&path.startsWith("/imports/upload/")){upload(x,session,path.substring("/imports/upload/".length()));return;}
       if(method.equals("POST")){
         requireForm(x);Map<String,String> f=decodeForm(readLimited(x.getRequestBody(),2*1024*1024));if(!auth.csrf(session,f.get("csrf")))throw new SecurityException("页面校验已失效，请刷新后重试");
+        if(workflow.post(x,session,f))return;
         switch(path){
           case "/security/ack" -> {auth.acknowledgeSafety(session,f.get("noticeVersion"));redirect(x,"/");return;}
           case "/notifications/read" -> {store.platform.notifications().markRead(session.actor,f.get("id"));redirect(x,"/notifications");return;}
@@ -90,9 +93,10 @@ public final class Main extends HttpSupport {
       }
       sendHtml(x,404,identity.error(404,"页面不存在"));
     }catch(SecurityException e){sendHtml(x,403,new PageLayout(version,session).error(403,e.getMessage()));}
+    catch(WorkflowContracts.WorkflowException e){int status=switch(e.code()){case NOT_FOUND->404;case INVALID_INPUT,NO_REVIEWER,OWNER_CHANGED->400;case TRANSACTION_FAILED->500;default->409;};sendHtml(x,status,new PageLayout(version,session).error(status,e.getMessage()));}
     catch(ConcurrentModificationException e){sendHtml(x,409,new PageLayout(version,session).error(409,e.getMessage()));}
     catch(IllegalArgumentException|WorkbookImportException e){sendHtml(x,400,new PageLayout(version,session).error(400,e.getMessage()));}
-    catch(RequestTooLargeException e){sendHtml(x,413,new PageLayout(version,session).error(413,"上传批次超过 50 MB，请分批上传"));}
+    catch(RequestTooLargeException e){sendHtml(x,413,new PageLayout(version,session).error(413,"请求内容过大：普通表单最多 2 MB，上传批次最多 50 MB，请分批处理"));}
     catch(Exception e){e.printStackTrace();sendHtml(x,500,new PageLayout(version,session).error(500,"处理失败，请查看启动终端；未确认的操作不会写入"));}
     finally{x.close();}
   }
@@ -114,7 +118,8 @@ public final class Main extends HttpSupport {
       }
       changes.add(new RecordChange(old.id(),Long.parseLong(f.get("version"+i)),values));
     }
-    store.platform.publishDirect(session.actor,changes,f.get("requestId"));RangeSelection r=RangeSelection.from(f,store.months(session.actor));redirect(x,"/details?"+r.queryString()+"&dataset="+url(schema.id)+"&branch="+url(f.getOrDefault("branch",""))+"&q="+url(f.getOrDefault("q",""))+"&page="+Math.max(1,integer(f.get("page"),1)));
+    var preview=store.platform.workflow().previewDirect(session.actor,schema.id,changes);
+    sendHtml(x,200,new WorkflowPages(version,session).preview(preview,"请核对本次修改后确认；正式数据尚未改变。"));
   }
   private void upload(HttpExchange x,AuthService.Session session,String dataset)throws Exception {
     DatasetSchema.get(dataset);AccessPolicy.require(session.actor,AccessPolicy.Action.UPLOAD,Organizations.DIVISION);
@@ -137,5 +142,5 @@ public final class Main extends HttpSupport {
     boolean overwrite="overwrite".equals(f.get("mode"));if(overwrite&&!"yes".equals(f.get("confirmOverwrite")))throw new IllegalArgumentException("覆盖可能清空已有填报值，请勾选确认，或保留原填报内容");
     var result=store.platform.importRows(s.actor,p.dataset,p.rows,overwrite,"import-"+token,p.baseline);pending.remove(token);adminRedirect(x,"导入完成：新增 "+result.added()+" 条，重复 "+result.duplicates()+" 条，保留已有填写 "+result.preserved()+" 条。",false);
   }
-  private void asset(HttpExchange x,String path)throws IOException{String name=path.substring(8);if(!Set.of("style.css","foundation.css","access.css","html5shiv.js","identity.js").contains(name)){text(x,404,"Not found","text/plain");return;}Path file=root.resolve("web/assets").resolve(name);byte[] bytes=Files.readAllBytes(file);security(x.getResponseHeaders());x.getResponseHeaders().set("Content-Type",name.endsWith(".css")?"text/css; charset=utf-8":"application/javascript; charset=utf-8");x.sendResponseHeaders(200,bytes.length);x.getResponseBody().write(bytes);}
+  private void asset(HttpExchange x,String path)throws IOException{String name=path.substring(8);if(!Set.of("style.css","foundation.css","access.css","workflow.css","html5shiv.js","identity.js").contains(name)){text(x,404,"Not found","text/plain");return;}Path file=root.resolve("web/assets").resolve(name);byte[] bytes=Files.readAllBytes(file);security(x.getResponseHeaders());x.getResponseHeaders().set("Content-Type",name.endsWith(".css")?"text/css; charset=utf-8":"application/javascript; charset=utf-8");x.sendResponseHeaders(200,bytes.length);x.getResponseBody().write(bytes);}
 }

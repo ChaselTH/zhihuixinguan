@@ -26,7 +26,7 @@ public final class WorkflowRoutesTest {
   public static void main(String[] args)throws Exception {
     Path data=Files.createTempDirectory("zhihuixinguan-workflow-http-");
     try(PlatformStore opened=open(data)) {
-      store=opened;setup();routes=new WorkflowRoutes(store,"0.3.0-pr0.7");run();
+      store=opened;setup();routes=new WorkflowRoutes(store,"0.3.0-a1b1.1");run();integrationRegressions();
       if(args.length==2&&"--fixtures".equals(args[0]))writeFixtures(Path.of(args[1]));
       System.out.println("WORKFLOW_ROUTES_OK assertions="+assertions+" real synthetic identities, H2 transactions and captured HTML forms");
     }
@@ -121,6 +121,17 @@ public final class WorkflowRoutesTest {
   static Submission submit(AuthService.Session session,BusinessRecord record,String value,String prior)throws Exception {
     Exchange page=post(session,"/workflow/draft/save",draftForm(session,record,value,"","0",prior,"preview",id()));return confirm(session,hidden(page.body(),"previewId"));
   }
+
+  static void integrationRegressions()throws Exception {
+    for(int i=0;i<35;i++)store.workflow().saveDraft(operator.actor(),"",0,"cross",List.of(),"",id());
+    var all=store.workflow().drafts(operator.actor(),"cross",0,100);
+    String page1=get(operatorSession,"/workflow/drafts?dataset=cross").body(),page2=get(operatorSession,"/workflow/drafts?dataset=cross&page=2").body();
+    check(page1.contains(all.get(0).id())&&page1.contains("下一页")&&page2.contains(all.get(34).id()),"all drafts reachable beyond first ten and first page");
+    check(!get(otherSession,"/workflow/drafts?dataset=cross").body().contains(all.get(0).id()),"draft pagination remains owner-only");
+    check(get(superSession,"/workflow/drafts").status==403,"admin cannot list private drafts");
+    check(get(operatorSession,"/workflow/edit?dataset=multi&organization=JINTAN").status==403,"editor rejects forged organization filter");
+    check(!get(reviewerSession,"/workflow/reviews").body().contains("<option value=\"APPROVED\""),"pending filters do not emit orphan state options");
+  }
   static Submission confirm(AuthService.Session session,String previewId)throws Exception {
     Exchange result=post(session,"/workflow/confirm",Map.of("previewId",previewId,"requestId",id(),"csrf",session.csrf));check(result.status==200,"submission confirmation succeeds");
     Matcher matcher=Pattern.compile("单号 ([A-Za-z0-9-]{10,})").matcher(result.body());check(matcher.find(),"confirmed page exposes stable submission id");return store.workflow().submission(session.actor,matcher.group(1));
@@ -158,7 +169,7 @@ public final class WorkflowRoutesTest {
   static void check(boolean value,String message){assertions++;if(!value)throw new AssertionError(message);}
 
   static void writeFixtures(Path output)throws Exception {
-    Files.createDirectories(output.resolve("assets"));Path root=Path.of("").toAbsolutePath();for(String css:List.of("style.css","foundation.css","workflow.css"))Files.copy(root.resolve("web/assets").resolve(css),output.resolve("assets").resolve(css),StandardCopyOption.REPLACE_EXISTING);
+    Files.createDirectories(output.resolve("assets"));Path root=Path.of("").toAbsolutePath();for(String css:List.of("style.css","foundation.css","access.css","workflow.css"))Files.copy(root.resolve("web/assets").resolve(css),output.resolve("assets").resolve(css),StandardCopyOption.REPLACE_EXISTING);
     String editor=get(operatorSession,"/workflow/edit?dataset=multi&from=2026-09-01&through=2026-09-30").body().replace("/assets/","assets/");
     Files.writeString(output.resolve("editor.html"),editor,StandardCharsets.UTF_8);
     List<Submission> all=store.workflow().submissions(operator.actor(),new Query(null,null,null,null,null,true,0,50));if(!all.isEmpty()) {
