@@ -72,7 +72,7 @@
 
 ## 2026-09-15：Git 智能 HTTP 推送持续被连接重置
 
-- 现象：分支内容约 100 KB，普通 `git push` 连续两次报 `Recv failure: Connection was reset`；强制 HTTP/1.1 后连接长期无响应。同期 `gh api` 访问 GitHub 正常。
-- 原因：本机到 GitHub 的 Git smart-HTTP 传输链路不稳定，不是提交大小、权限、认证或仓库规则错误。
-- 解决：先逐个通过 GitHub Git Data API 创建并校验 blob，再基于精确基线创建相同 tree、commit 和分支 ref；每个远端 blob SHA 与本地提交树逐项比对，避免内容偏差。
-- 避免复发：推送连接重置时先保留本地提交并有限次重试；若 GitHub API 可用，使用可校验的 Git Data API 传输对象，不在不确定状态下改远端地址、丢弃提交或重复创建 PR。
+- 现象：分支内容约 100 KB，普通 `git push` 连续两次报 `Recv failure: Connection was reset`；强制 HTTP/1.1 后连接长期无响应。同期 `gh api` 访问 GitHub 正常。Git Data API 创建的提交与本地提交 tree 完全相同，但提交 SHA 不同。
+- 原因：本机到 GitHub 的 Git smart-HTTP 传输链路不稳定，不是提交大小、权限、认证或仓库规则错误；GitHub REST 创建的提交消息末尾没有换行，而本地 `git commit-tree -m` 会补换行，因此 commit 对象 SHA 不同。
+- 解决：先逐个通过 GitHub Git Data API 创建并校验 blob，再基于精确基线创建相同 tree、commit 和分支 ref；以 tree SHA 证明文件内容一致，创建远端 ref 后 fetch 该对象并把本地分支指向远端提交。
+- 避免复发：推送连接重置时先保留本地提交并有限次重试；若 GitHub API 可用，使用可校验的 Git Data API 传输对象，并同时核对 blob、tree、parent；不要仅凭 commit SHA 不同判断内容偏差，也不要丢弃提交或重复创建 PR。
