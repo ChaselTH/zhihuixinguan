@@ -14,6 +14,13 @@ public final class IdentityTest {
       AuthService auth=new AuthService(store);AuthService.Session first=auth.authenticate("synthetic-1",SUPER_NUMBER,bootstrap);
       check(first!=null&&first.authNumber.equals(SUPER_NUMBER)&&first.actor.role()==Role.SUPER_ADMIN,"synthetic seed identity and leading zeros");
       check(!first.mustChangePassword,"super is exempt from initial password change");
+      check(!first.safetyAccepted(),"super still requires safety acknowledgement");
+      expect(IllegalArgumentException.class,()->auth.acknowledgeSafety(first,"obsolete"));
+      check(!first.safetyAccepted(),"failed safety acknowledgement does not open gate");
+      auth.acknowledgeSafety(first,AccessPlatform.SAFETY_VERSION);auth.acknowledgeSafety(first,AccessPlatform.SAFETY_VERSION);
+      check(first.safetyAccepted(),"successful safety acknowledgement opens this session only");
+      check(!auth.authenticate("synthetic-second",SUPER_NUMBER,bootstrap).safetyAccepted(),"each new login requires fresh safety acknowledgement");
+      try(Connection db=DriverManager.getConnection("jdbc:h2:file:"+dir.resolve("platform/records").toString().replace('\\','/')+";DB_CLOSE_ON_EXIT=FALSE","sa","");Statement st=db.createStatement();ResultSet rs=st.executeQuery("SELECT session_id FROM security_acknowledgements")){check(rs.next()&&rs.getString(1).matches("[a-f0-9]{64}")&&!rs.getString(1).equals(first.token)&&!rs.next(),"persist only session hash; never raw login token; repeat ack idempotent");}
       check(store.list(first.actor,null,null,null).isEmpty()&&store.listUsers(first.actor).size()==1,"super can view data and manage users immediately");
       expect(IllegalArgumentException.class,()->auth.changePassword(first,bootstrap));
       auth.changePassword(first,newRootPassword);
@@ -23,6 +30,7 @@ public final class IdentityTest {
       check(div.initialPassword().length()>=16,"random initial password");
       check(store.authenticateUser(div.user().authNumber(),div.initialPassword())!=null,"created initial password authenticates");
       for(var created:List.of(div,w,j))check(created.user().mustChangePassword(),"non-super initial change remains mandatory");
+      AuthService.Session forced=auth.authenticate("synthetic-force",div.user().authNumber(),div.initialPassword());expect(SecurityException.class,()->auth.acknowledgeSafety(forced,AccessPlatform.SAFETY_VERSION));
       expect(SecurityException.class,()->store.listUsers(div.user().actor()));
       ActorContext division=activate(store,div),branch=activate(store,w);
       check(store.listUsers(branch).isEmpty(),"branch cannot list other branches or administrators");

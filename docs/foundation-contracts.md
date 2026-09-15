@@ -1,5 +1,7 @@
 # PR0 公共基础与后续双 AI 交接约定
 
+A1 向后兼容补充：新增 `PlatformStore.access()`、schema 3 和权限 / 通知 / 审计页面；原工作流与通知接口签名不变。详见 [A1 交接说明](A1-权限与公共页面交接.md)，代码是否已进入 main 以 A1 PR 合并状态为准。
+
 2026-09-15：PR #1/#2 均已合并，代码基线 c8198f70cd4dabece3ce22c21f4611de056c42d5。用户初步安装测试后授权 A1/B1 并行；当前有效任务以 [协作入口](ai-collaboration/README.md) 为准，取代下方历史暂缓文字。现有 WorkflowService 和 NotificationService 签名在 B1 期间保持兼容，A1 只作向后兼容新增。
 
 2026-09-14 协作修订：统一使用 `main` 作为后续共同开发基线，不再以 `codex/integration-v0.3` 为前置条件。先将 PR0.6 公共基础合入 main，再由公共维护人实现、测试并合并工作流公共契约补丁，A/B 才从 main 的同一明确提交创建业务分支。合入 main 不等于可以正式投产；发布仍须单独联调、离线及实机验收。

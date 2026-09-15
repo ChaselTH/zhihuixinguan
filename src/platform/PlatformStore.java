@@ -14,6 +14,7 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
   public record AuditEvent(String at,String actor,String organization,String action,String recordId,String requestId,String before,String after) {}
   private final Connection db;
   private final WorkflowEngine workflow;
+  private final AccessPlatform access;
   private final java.util.function.Consumer<String> checkpoint;
   public record CreatedUser(UserAccount user,String initialPassword){}
   private static final Passwords.Encoded DUMMY=Passwords.encode(UUID.randomUUID().toString());
@@ -46,11 +47,12 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
   public static boolean isManager(ActorContext a){return a!=null&&(a.role()==Role.SUPER_ADMIN||a.role()==Role.DIVISION_ADMIN||a.role()==Role.BRANCH_ADMIN);}
   public synchronized UserAccount managedUser(ActorContext a,String id){currentIdentity(a);try{UserAccount u=loadUser(id);requireManage(a,u);return u;}catch(SQLException e){throw failure(e);}}
   private void requireManage(ActorContext a,UserAccount u){if(u==null||a.userId().equals(u.id())||!AccessPolicy.canManage(a,u.role(),u.organizationId()))throw new SecurityException("不能管理该人员或同级、上级账号");}
-  public synchronized CreatedUser createUser(ActorContext a,String number,String name,Role role,String org){return transaction(()->{
+  public synchronized CreatedUser createUser(ActorContext a,String number,String name,Role role,String org){return transaction(()->createUserInTransaction(a,number,name,role,org));}
+  CreatedUser createUserInTransaction(ActorContext a,String number,String name,Role role,String org)throws SQLException {
     currentIdentity(a);validateUser(number,name,role,org);if(!AccessPolicy.canManage(a,role,org))throw new SecurityException("不能创建该角色或其他支行的账号");
     try(PreparedStatement st=statement("SELECT id FROM users WHERE auth_number=?",number.strip());ResultSet rs=st.executeQuery()){if(rs.next())throw new IllegalArgumentException("统一认证号已存在（包括已停用账号），请修改或恢复原账号");}
     String id="user-"+UUID.randomUUID(),password=Passwords.temporary();insertUser(id,number.strip(),name.strip(),role,org,Passwords.encode(password));UserAccount u=loadUser(id);audit(a,org,id,"USER_CREATE",UUID.randomUUID().toString(),"",userSummary(u),"初始密码仅显示一次，不记入日志");return new CreatedUser(u,password);
-  });}
+  }
   public synchronized void updateUser(ActorContext a,String id,long revision,String name,Role role,String org,boolean active){transaction(()->{
     currentIdentity(a);UserAccount old=loadUser(id);requireManage(a,old);validateUser(old.authNumber(),name,role,org);if(!AccessPolicy.canManage(a,role,org))throw new SecurityException("不能转移到该机构或提升到该角色");if(old.revision()!=revision)throw new ConcurrentModificationException("人员信息已变化，请刷新后再操作");
     exec("UPDATE users SET display_name=?,role=?,organization_id=?,active=?,revision=revision+1 WHERE id=?",name.strip(),role.name(),org,active,id);audit(a,old.organizationId(),id,active?"USER_UPDATE":"USER_DISABLE",UUID.randomUUID().toString(),userSummary(old),userSummary(loadUser(id)),"原会话失效；删除按停用处理，保留历史");return null;
@@ -76,7 +78,9 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
     db=DriverManager.getConnection("jdbc:h2:file:"+path+";DB_CLOSE_ON_EXIT=FALSE;LOCK_TIMEOUT=10000","sa","");
     try {initialize();}catch(Exception e){db.close();throw e;}
     workflow=new WorkflowEngine(this,db,clock,checkpoint);
+    access=new AccessPlatform(this,db,workflow,clock,checkpoint);
   }
+  public AccessPlatform access() { return access; }
   public WorkflowContracts.WorkflowService workflow() { return workflow; }
   public NotificationService notifications() { return workflow; }
   public int schemaVersion() { return SchemaMigrations.CURRENT_VERSION; }
@@ -241,6 +245,7 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
   private PreparedStatement statement(String sql,Object...args)throws SQLException {PreparedStatement st=db.prepareStatement(sql);for(int i=0;i<args.length;i++)st.setObject(i+1,args[i]);return st;}
   private void exec(String sql,Object...args)throws SQLException{try(PreparedStatement st=statement(sql,args)){st.executeUpdate();}}
   @FunctionalInterface interface WorkflowWork<T>{T run()throws Exception;}
+  <T>T anonymousTransaction(WorkflowWork<T> work) { synchronized(this) { return transaction(work::run); } }
   <T>T workflowTransaction(ActorContext actor,WorkflowWork<T> work) {
     synchronized(this) {
       return transaction(()->{currentIdentity(actor);return work.run();});

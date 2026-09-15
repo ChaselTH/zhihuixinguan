@@ -318,7 +318,7 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
     UserAccount user=store.sessionUser(id);
     return user!=null&&user.active()&&(AccessPolicy.all(user.actor())||user.organizationId().equals(org));
   }
-  private String emit(String type,String org,String title,String summary,String submissionId,List<String> recipients,String eventKey)throws SQLException {
+  String emit(String type,String org,String title,String summary,String submissionId,List<String> recipients,String eventKey)throws SQLException {
     String existing=scalar("SELECT id FROM notification_events WHERE event_key=?",eventKey);if(existing!=null)return existing;
     String id=id();exec("INSERT INTO notification_events(id,event_type,organization_id,payload,created_at,event_key) VALUES(?,?,?,?,?,?)",id,type,org,Codec.encode(List.of(title,summary,submissionId)),now(),eventKey);
     for(String recipient:new LinkedHashSet<>(recipients))if(eligibleRecipient(recipient,org)) {

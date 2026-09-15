@@ -32,13 +32,27 @@ public final class Main extends HttpSupport {
       if(method.equals("GET")&&path.startsWith("/assets/")){asset(x,path);return;}
       if(method.equals("POST")&&path.equals("/login")){login(x);return;}
       session=auth.session(x);IdentityPages identity=new IdentityPages(version,session);
+      AccessPages access=new AccessPages(version,session);
+      if(path.equals("/access/apply")) {
+        if(method.equals("GET")){sendHtml(x,200,access.apply(auth.applicationCsrf(x),query(x.getRequestURI()).get("scope")));return;}
+        if(method.equals("POST")){requireForm(x);Map<String,String> f=decodeForm(readLimited(x.getRequestBody(),8192));if(!auth.consumeApplicationCsrf(x,f.get("csrf")))throw new SecurityException("申请页面已失效，请重新打开申请页");if(!auth.allowApplication(x.getRemoteAddress().getAddress().getHostAddress())){sendHtml(x,429,access.error(429,"申请过于频繁，请十分钟后再试或联系管理员"));return;}store.platform.access().apply(f.get("number"),f.get("name"),f.get("organization"));redirect(x,"/access/received");return;}
+      }
+      if(method.equals("GET")&&path.equals("/access/received")){sendHtml(x,200,access.receipt());return;}
       if(method.equals("GET")&&(path.equals("/admin")||path.equals("/admin/"))){redirect(x,session==null?"/login":"/");return;}
       if(path.startsWith("/admin")){sendHtml(x,404,identity.error(404,"旧管理入口已停用，请从统一登录入口进入"));return;}
       if(session==null){if(method.equals("GET")&&path.equals("/login"))sendHtml(x,200,identity.login("",auth.loginCsrf(x)));else redirect(x,"/login");return;}
       if(session.mustChangePassword&&!path.equals("/account/password")&&!path.equals("/logout")){redirect(x,"/account/password");return;}
+      if(!session.safetyAccepted()&&!Set.of("/security","/security/ack","/account/password","/logout").contains(path)){redirect(x,"/security");return;}
+      if(session.safetyAccepted())session.unreadCount=store.platform.notifications().unreadCount(session.actor);
       Map<String,String> q=query(x.getRequestURI());
       ImportPages imports=new ImportPages(version,session);
       if(method.equals("GET")){
+        if(path.equals("/security")){sendHtml(x,200,access.safety());return;}
+        if(path.equals("/access/requests")){boolean only=!"yes".equals(q.get("all"));int offset=integer(q.get("offset"),0);sendHtml(x,200,access.applications(store.platform.access().applications(session.actor,only,offset,25),only,offset));return;}
+        if(path.equals("/access/request")){var request=store.platform.access().application(session.actor,q.get("id"));sendHtml(x,200,access.application(request,store.platform.access().canDecide(session.actor,request)));return;}
+        if(path.equals("/notifications")){boolean unread="yes".equals(q.get("unread"));int offset=integer(q.get("offset"),0);sendHtml(x,200,new NotificationPages(version,session).inbox(store.platform.notifications().inbox(session.actor,unread,offset,25),unread,offset));return;}
+        if(path.equals("/notifications/detail")){var notice=store.platform.access().notice(session.actor,q.get("id"));sendHtml(x,200,new NotificationPages(version,session).detail(notice,store.platform.access().noticeApplication(session.actor,notice.id())));return;}
+        if(path.equals("/audit")){int offset=integer(q.get("offset"),0);var filter=new AccessPlatform.AuditFilter(q.get("category"),q.get("organization"),q.get("dataset"),q.get("search"),auditDate(q.get("from")),auditDate(q.get("through")));sendHtml(x,200,new AuditPages(version,session).audit(store.platform.access().audit(session.actor,filter,offset,25),q,offset));return;}
         if(path.equals("/login")){redirect(x,"/");return;}
         if(path.equals("/account/password")){if(auth.passwordChangeExpired(session)){passwordRelogin(x);return;}sendHtml(x,200,identity.password(""));return;}
         if(path.startsWith("/people")){if(!PlatformStore.isManager(session.actor))throw new SecurityException("没有人员管理权限");
@@ -60,6 +74,9 @@ public final class Main extends HttpSupport {
       if(method.equals("POST")){
         requireForm(x);Map<String,String> f=decodeForm(readLimited(x.getRequestBody(),2*1024*1024));if(!auth.csrf(session,f.get("csrf")))throw new SecurityException("页面校验已失效，请刷新后重试");
         switch(path){
+          case "/security/ack" -> {auth.acknowledgeSafety(session,f.get("noticeVersion"));redirect(x,"/");return;}
+          case "/notifications/read" -> {store.platform.notifications().markRead(session.actor,f.get("id"));redirect(x,"/notifications");return;}
+          case "/access/decision" -> {String action=f.get("action");Role role="APPROVE".equals(action)?Role.valueOf(f.getOrDefault("role","")):null;var result=store.platform.access().decide(session.actor,f.get("id"),Long.parseLong(f.get("revision")),action,role,f.get("reason"),f.get("requestId"));if(result.created()!=null)sendHtml(x,200,identity.created(result.created()));else redirect(x,"/access/request?id="+url(result.application().id()));return;}
           case "/logout" -> {auth.logout(x);x.getResponseHeaders().add("Set-Cookie",auth.clearCookie());redirect(x,"/login");return;}
           case "/account/password" -> {if(auth.passwordChangeExpired(session)){passwordRelogin(x);return;}try{if(!Objects.equals(f.get("next"),f.get("confirm")))throw new IllegalArgumentException("两次新密码输入不一致");auth.changePassword(session,f.get("next"));}catch(IllegalArgumentException e){sendHtml(x,400,identity.password(e.getMessage()));return;}x.getResponseHeaders().add("Set-Cookie",auth.clearCookie());redirect(x,"/login");return;}
           case "/people/create" -> {if(!PlatformStore.isManager(session.actor))throw new SecurityException("没有人员管理权限");try{sendHtml(x,200,identity.created(store.platform.createUser(session.actor,f.get("authNumber"),f.get("name"),Role.valueOf(f.getOrDefault("role","")),userOrganization(f))));}catch(IllegalArgumentException e){sendHtml(x,400,identity.userForm(null,f,e.getMessage()));}return;}
@@ -79,13 +96,14 @@ public final class Main extends HttpSupport {
     catch(Exception e){e.printStackTrace();sendHtml(x,500,new PageLayout(version,session).error(500,"处理失败，请查看启动终端；未确认的操作不会写入"));}
     finally{x.close();}
   }
+  private static LocalDate auditDate(String text){if(text==null||text.isBlank())return null;try{return LocalDate.parse(text);}catch(java.time.format.DateTimeParseException e){throw new IllegalArgumentException("日期请使用 YYYY-MM-DD 格式");}}
   private static String userOrganization(Map<String,String> fields){
     if(Role.DIVISION_ADMIN.name().equals(fields.get("role")))return Organizations.DIVISION;
     String org=fields.get("organization");if(org==null||org.isBlank())throw new IllegalArgumentException("请选择所属支行");return org;
   }
   private void passwordRelogin(HttpExchange x)throws IOException{auth.logout(x);x.getResponseHeaders().add("Set-Cookie",auth.clearCookie());sendHtml(x,200,new IdentityPages(version,null).login("距上次登录已超过 15 分钟，请重新登录后再打开“修改密码”。",auth.loginCsrf(x)));}
   private DashboardData dashboard(Map<String,String> q,ActorContext a){List<String> months=store.months(a);RangeSelection r=RangeSelection.from(q,months);DashboardData d=new DashboardData(r,months,store.readAll(a),store.readRange(r,a));if(!AccessPolicy.all(a))d.branches.entrySet().removeIf(e->!e.getKey().equals(Organizations.label(a.organizationId())));return d;}
-  private void login(HttpExchange x)throws IOException{requireForm(x);Map<String,String> f=decodeForm(readLimited(x.getRequestBody(),8192));if(!auth.consumeLoginCsrf(x,f.get("csrf")))throw new SecurityException("登录页面已失效，请重新打开登录页");AuthService.Session session=auth.authenticate(x.getRemoteAddress().getAddress().getHostAddress(),f.get("authNumber"),f.get("password"));if(session==null){sendHtml(x,401,new IdentityPages(version,null).login("账号或密码错误、账号停用或尝试过于频繁，请稍后重试",auth.loginCsrf(x)));return;}x.getResponseHeaders().add("Set-Cookie",auth.setCookie(session));redirect(x,session.mustChangePassword?"/account/password":"/");}
+  private void login(HttpExchange x)throws IOException{requireForm(x);Map<String,String> f=decodeForm(readLimited(x.getRequestBody(),8192));if(!auth.consumeLoginCsrf(x,f.get("csrf")))throw new SecurityException("登录页面已失效，请重新打开登录页");AuthService.Session session=auth.authenticate(x.getRemoteAddress().getAddress().getHostAddress(),f.get("authNumber"),f.get("password"));if(session==null){sendHtml(x,401,new IdentityPages(version,null).login("账号或密码错误、账号停用或尝试过于频繁，请稍后重试",auth.loginCsrf(x)));return;}x.getResponseHeaders().add("Set-Cookie",auth.setCookie(session));redirect(x,session.mustChangePassword?"/account/password":"/security");}
   private void save(HttpExchange x,AuthService.Session session,Map<String,String> f)throws Exception {
     DatasetSchema schema=DatasetSchema.get(f.get("dataset"));int count=integer(f.get("rows"),-1);if(count<1||count>50)throw new IllegalArgumentException("保存记录数无效");
     List<RecordChange> changes=new ArrayList<>();
@@ -119,5 +137,5 @@ public final class Main extends HttpSupport {
     boolean overwrite="overwrite".equals(f.get("mode"));if(overwrite&&!"yes".equals(f.get("confirmOverwrite")))throw new IllegalArgumentException("覆盖可能清空已有填报值，请勾选确认，或保留原填报内容");
     var result=store.platform.importRows(s.actor,p.dataset,p.rows,overwrite,"import-"+token,p.baseline);pending.remove(token);adminRedirect(x,"导入完成：新增 "+result.added()+" 条，重复 "+result.duplicates()+" 条，保留已有填写 "+result.preserved()+" 条。",false);
   }
-  private void asset(HttpExchange x,String path)throws IOException{String name=path.substring(8);if(!Set.of("style.css","foundation.css","html5shiv.js","identity.js").contains(name)){text(x,404,"Not found","text/plain");return;}Path file=root.resolve("web/assets").resolve(name);byte[] bytes=Files.readAllBytes(file);security(x.getResponseHeaders());x.getResponseHeaders().set("Content-Type",name.endsWith(".css")?"text/css; charset=utf-8":"application/javascript; charset=utf-8");x.sendResponseHeaders(200,bytes.length);x.getResponseBody().write(bytes);}
+  private void asset(HttpExchange x,String path)throws IOException{String name=path.substring(8);if(!Set.of("style.css","foundation.css","access.css","html5shiv.js","identity.js").contains(name)){text(x,404,"Not found","text/plain");return;}Path file=root.resolve("web/assets").resolve(name);byte[] bytes=Files.readAllBytes(file);security(x.getResponseHeaders());x.getResponseHeaders().set("Content-Type",name.endsWith(".css")?"text/css; charset=utf-8":"application/javascript; charset=utf-8");x.sendResponseHeaders(200,bytes.length);x.getResponseBody().write(bytes);}
 }
