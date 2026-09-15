@@ -27,7 +27,7 @@ public final class HttpSmokeTest {
     Process server=new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin","java").toString(),"-Dfile.encoding=UTF-8","-cp",app.resolve("app/zhihui-xinguan.jar")+File.pathSeparator+app.resolve("app/lib")+File.separator+"*","Main","--root",httpRoot.toString(),"--data-root",data.toString(),"--bind","127.0.0.1","--port",""+port).redirectErrorStream(true).redirectOutput(data.resolve("server.log").toFile()).start();
     try{
       boolean ready=false;for(int i=0;i<100;i++){try{if(get("/health").statusCode()==200){ready=true;break;}}catch(IOException ignored){}Thread.sleep(100);}check(ready,"server ready");
-      check(get("/health").body().contains("SCHEMA=2"),"health reports migrated schema version");
+      check(get("/health").body().contains("SCHEMA=3"),"health reports migrated schema version");
       check(get("/export?dataset=multi").statusCode()==303,"anonymous export requires login");
       loginAndChange(superNumber,password,false);
       check(get("/bootstrap.local.properties").statusCode()==404&&get("/assets/bootstrap.local.properties").statusCode()==404,"local initialization file is never served by HTTP");
@@ -81,7 +81,7 @@ public final class HttpSmokeTest {
       check(get("/foundation").statusCode()==200,"diagnostics available");
       var other=upload("multi",workbook("multi","JINTAN","OTHER"),csrf);check(post("/imports/confirm",Map.of("csrf",csrf,"token",hidden(other.body()).get("token"),"mode","preserve")).statusCode()==303,"second branch imported");
       check(post("/people/create",Map.of("csrf",csrf,"authNumber","900000006","name","同级","role","DIVISION_ADMIN","organization","CZ")).statusCode()==403,"division cannot create peer");
-      client=newClient();loginAndChange("900000003",branch.password());
+      client=newClient();loginAndChange("900000003",branch.password());HttpClient branchClient=client;
       String branchHome=get("/").body();check(branchHome.contains("人员管理")&&!branchHome.contains("href=\"/imports\""),"branch role navigation");
       String branchDetails=get("/details?dataset=multi&month=2026-09").body();check(branchDetails.contains("虚构测试企业 HTTP")&&!branchDetails.contains("虚构测试企业 OTHER"),"branch data scoped");
       check(get("/branch?branch="+URLEncoder.encode("金坛",StandardCharsets.UTF_8)).statusCode()==403,"forged branch query blocked");
@@ -99,6 +99,7 @@ public final class HttpSmokeTest {
       check(post("/update-batch",forged).statusCode()==403,"operator cannot bypass workflow using direct POST");
       client=newClient();loginAndChange("900000005",reviewer.password());HttpClient reviewerClient=client;
       check(get("/details?dataset=multi&month=2026-09").body().contains("保存资料补充"),"reviewer may directly fill own branch");
+      AccessHttpTest.run(superClient,divisionClient,branchClient,operatorClient);
       client=superClient;
       Map<String,String> editReviewer=hidden(get("/people/edit?id="+reviewer.id()).body());editReviewer.put("name","已转金坛");editReviewer.put("role","OPERATOR");editReviewer.put("organization","JINTAN");editReviewer.put("active","true");
       check(post("/people/update",editReviewer).statusCode()==303,"super changes role and organization");
@@ -121,9 +122,9 @@ public final class HttpSmokeTest {
   }
   static void loginAndChange(String number,String password,boolean mustChange)throws Exception{
     String csrf=hidden(get("/login").body()).get("csrf");var response=post("/login",Map.of("csrf",csrf,"authNumber",number,"password",password,"role","SUPER_ADMIN"));
-    check(response.statusCode()==303&&response.headers().firstValue("location").orElse("").equals(mustChange?"/account/password":"/"),"first login gate follows persisted role policy");
+    check(response.statusCode()==303&&response.headers().firstValue("location").orElse("").equals(mustChange?"/account/password":"/security"),"first login gate follows persisted role policy");
     if(mustChange)check(get("/people").statusCode()==303&&get("/export?dataset=multi").statusCode()==303,"first-password gate covers all business routes");
-    else check(get("/people").statusCode()==200&&get("/export?dataset=multi").statusCode()==200,"super can manage and export without first password change");
+    else {check(get("/people").statusCode()==303&&get("/export?dataset=multi").statusCode()==303,"super safety gate applies without forced password change");ackSafety();check(get("/people").statusCode()==200&&get("/export?dataset=multi").statusCode()==200,"super can manage and export after safety acknowledgement");}
     String next=UUID.randomUUID().toString(),changePage=get("/account/password").body(),changeCsrf=hidden(changePage).get("csrf");
     check(changePage.contains("readonly=\"readonly\" disabled=\"disabled\"")&&changePage.contains("value=\"********\"")&&!changePage.contains("name=\"current\"")&&!changePage.contains(password),"current password is an inert fixed mask, never the actual password");
     check(changePage.contains(number),"password page identifies read-only current account");
@@ -134,6 +135,14 @@ public final class HttpSmokeTest {
     check(get("/account/password").statusCode()==303,"password change revokes session");
     String loginCsrf=hidden(get("/login").body()).get("csrf");
     check(post("/login",Map.of("csrf",loginCsrf,"authNumber",number,"password",next)).statusCode()==303,"login after change");
+    ackSafety();
+  }
+  static void ackSafety()throws Exception {
+    check(get("/export?dataset=multi").headers().firstValue("location").orElse("").equals("/security"),"new session must acknowledge safety before export");
+    Map<String,String> fields=hidden(get("/security").body());
+    check(post("/security/ack",Map.of("csrf","forged","noticeVersion",AccessPlatform.SAFETY_VERSION)).statusCode()==403,"safety requires csrf");
+    check(post("/security/ack",Map.of("csrf",fields.get("csrf"),"noticeVersion","obsolete")).statusCode()==400,"stale notice version rejected");
+    check(post("/security/ack",fields).statusCode()==303,"acknowledge safety");
   }
   static Created create(String number,String name,Role role,String org,String csrf)throws Exception{
     Map<String,String> fields=new HashMap<>(Map.of("csrf",csrf,"authNumber",number,"name",name,"role",role.name()));if(role!=Role.DIVISION_ADMIN)fields.put("organization",org);

@@ -1,5 +1,13 @@
 # 开发问题记录
 
+## 2026-09-15：A1 回归与页面检查
+
+- 审批创建账号必须复用同一个数据库事务，不能在外层审批事务内调用会自行 commit 的公开 createUser；现拆出同包 helper，并对账号、通知和最终决策阶段注入故障验证回滚。
+- 匿名权限申请不可复用 Path=/login 的 CSRF Cookie；独立 ZXAPPLY Cookie 使用 Path=/access/apply，一次性验证，配合来源限流和待办认证号唯一约束。
+- A1 新增审计测试曾持有直接修改前的 BusinessRecord 版本，后续保存草稿被正确拒绝；测试改为重新读取正式版本，未放宽生产冲突检查。
+- PowerShell 启动 Java 时 `-Dfile.encoding=UTF-8` 必须整体加引号，避免参数被拆分为错误的主类名。
+- 本地 Chromium 虚构页面检查发现公共导航的 span 样式覆盖通知气泡间距；增加限定选择器，保持小尺寸红色气泡。视觉检查不等同于 Win7 / IE 实机验收。
+
 ## 2026-09-14：PowerShell 文档分段读取失败
 
 - 现象：使用 `[Math]::Min($range[1], $lines.Count)` 控制文档读取范围时，PowerShell 报错 `Argument types do not match`，循环未执行。

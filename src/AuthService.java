@@ -13,6 +13,8 @@ final class AuthService {
   private final Map<String,Session> sessions=new HashMap<>();
   private final Map<String,Attempt> attempts=new LinkedHashMap<>();
   private final Map<String,Long> loginTokens=new HashMap<>();
+  private final Map<String,Long> applicationTokens=new HashMap<>();
+  private final Map<String,Attempt> applicationAttempts=new HashMap<>();
   AuthService(PlatformStore users){this(users,Clock.systemUTC());}
   AuthService(PlatformStore users,Clock clock){this.users=users;this.clock=clock;users.prepareSuperAdminPolicy();if(!users.hasUsers())throw new IllegalStateException("账号库尚未初始化，请配置本地初始化文件后启动");}
   private long now(){return clock.instant().getEpochSecond();}
@@ -30,6 +32,10 @@ final class AuthService {
     sessions.entrySet().removeIf(e->e.getValue().actor.userId().equals(s.actor.userId()));
   }
   synchronized void logout(HttpExchange x){sessions.remove(cookie(x,COOKIE));}
+  synchronized String applicationCsrf(HttpExchange x){purge();String old=cookie(x,"ZXAPPLY");if(old!=null&&applicationTokens.containsKey(old))return old;if(applicationTokens.size()>=10000)throw new IllegalArgumentException("申请页面繁忙，请稍后重试");String next=token(24);applicationTokens.put(next,now()+900);x.getResponseHeaders().add("Set-Cookie","ZXAPPLY="+next+"; Path=/access/apply; HttpOnly; SameSite=Strict");return next;}
+  synchronized boolean consumeApplicationCsrf(HttpExchange x,String supplied){String token=cookie(x,"ZXAPPLY");Long until=token==null?null:applicationTokens.remove(token);return until!=null&&until>=now()&&equal(token,supplied);}
+  synchronized boolean allowApplication(String remote){long now=now();applicationAttempts.entrySet().removeIf(e->now-e.getValue().started>=600);if(!applicationAttempts.containsKey(remote)&&applicationAttempts.size()>=10000)return false;return ++applicationAttempts.computeIfAbsent(remote,k->new Attempt(now)).count<=5;}
+  synchronized void acknowledgeSafety(Session s,String version){if(s==null||sessions.get(s.token)!=s||s.expiresAt<=now()||s.mustChangePassword)throw new SecurityException("请重新登录或先修改初始密码");try{String hash=HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(s.token.getBytes(java.nio.charset.StandardCharsets.UTF_8)));users.access().acknowledge(s.actor,hash,version);s.safetyVersion=version;}catch(NoSuchAlgorithmException e){throw new IllegalStateException(e);}}
   synchronized String loginCsrf(HttpExchange x){purge();String old=cookie(x,"ZXLOGIN");if(old!=null&&loginTokens.containsKey(old))return old;String next=token(24);loginTokens.put(next,now()+900);x.getResponseHeaders().add("Set-Cookie","ZXLOGIN="+next+"; Path=/login; HttpOnly; SameSite=Strict");return next;}
   synchronized boolean consumeLoginCsrf(HttpExchange x,String supplied){String token=cookie(x,"ZXLOGIN");Long until=token==null?null:loginTokens.remove(token);return until!=null&&until>=now()&&equal(token,supplied);}
   boolean csrf(Session s,String supplied){return s!=null&&equal(s.csrf,supplied);}
@@ -38,9 +44,12 @@ final class AuthService {
   String clearCookie(){return COOKIE+"=deleted; Path=/; Max-Age=0; HttpOnly; SameSite=Strict";}
   private String token(int size){byte[] a=new byte[size];random.nextBytes(a);return Base64.getUrlEncoder().withoutPadding().encodeToString(a);}
   private static String cookie(HttpExchange x,String name){for(String header:x.getRequestHeaders().getOrDefault("Cookie",List.of()))for(String part:header.split(";")){String[] pair=part.trim().split("=",2);if(pair.length==2&&pair[0].equals(name))return pair[1];}return null;}
-  private void purge(){long now=now();sessions.entrySet().removeIf(e->e.getValue().expiresAt<now);loginTokens.entrySet().removeIf(e->e.getValue()<now);attempts.entrySet().removeIf(e->now-e.getValue().started>600);if(attempts.size()>10000)attempts.clear();if(loginTokens.size()>10000)loginTokens.clear();}
+  private void purge(){long now=now();sessions.entrySet().removeIf(e->e.getValue().expiresAt<now);loginTokens.entrySet().removeIf(e->e.getValue()<now);applicationTokens.entrySet().removeIf(e->e.getValue()<now);attempts.entrySet().removeIf(e->now-e.getValue().started>600);if(attempts.size()>10000)attempts.clear();if(loginTokens.size()>10000)loginTokens.clear();}
   static final class Session {
     final String token,csrf,authNumber;final ActorContext actor;final boolean mustChangePassword;final long authenticatedAt;long expiresAt;
+    volatile String safetyVersion="";
+    volatile long unreadCount=0;
+    boolean safetyAccepted(){return AccessPlatform.SAFETY_VERSION.equals(safetyVersion);}
     Session(String token,String csrf,long authenticatedAt,UserAccount user){this.token=token;this.csrf=csrf;this.authenticatedAt=authenticatedAt;this.expiresAt=authenticatedAt+28800;actor=user.actor();authNumber=user.authNumber();mustChangePassword=user.mustChangePassword();}
   }
   private static final class Attempt{int count;long lockedUntil;final long started;Attempt(long now){started=now;}}
