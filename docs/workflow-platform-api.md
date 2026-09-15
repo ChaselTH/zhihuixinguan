@@ -1,5 +1,7 @@
 # PR0.7 工作流公共接口与交接
 
+2026-09-15 更新：本补丁已通过 PR #2 合入 main，SHA c8198f70cd4dabece3ce22c21f4611de056c42d5。用户完成初步安装测试，现授权 A1/B1 并行；任务与页面接入约定见 [B1-001](ai-collaboration/B1-001.md)。下方“暂不派发”仅为上一轮历史状态。
+
 日期：2026-09-14。版本：`0.3.0-pr0.7`，仅公共服务测试里程碑，不是完整 V0.3。
 
 本补丁从 `origin/codex/v0.3-foundation` 的 `8c72d16239d9bc3bc8d4b8e1c27706c89d84bfed` 建立 `codex/v0.3-workflow-platform`，包含 B 的交接清单、安装测试 Bash 路径修复和脱敏问题记录。基础 PR #1 已合入 main，SHA 为 `816e8f7646bd5b0f01ae815cff17e2e4741f907a`。本补丁通过独立 PR 交接，实际合并 SHA 见 PR 记录及测试包 SOURCE_COMMIT；不将本地检查当作 GitHub CI 通过。
