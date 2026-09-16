@@ -1,5 +1,9 @@
 # PR0 公共基础与后续双 AI 交接约定
 
+A2 向后兼容补充：`PlatformStore.importing()` 提供真实 H2 持久化导入任务、逐条决定和原子确认，新增 schema 4 / V004，不改写旧迁移。HTTP 导出统一进入 `AuthorizedExportService`，保持现有月份／区间／机构／搜索语义及正式数据隔离。实际签名、异常、路由、限制和示例见 [A2 交接说明](A2-导入与导出交接.md)。A2 独立 PR 待评审，不替代 B2 的业务状态展示。后续增加完成状态筛选时必须同时更新授权导出，不复制另一套未授权查询。
+
+A1/B1 已于 PR #4/#5 合并；后文各 PR0／A1 等待接入文字仅为历史说明，当前基线与任务状态以 [协作入口](ai-collaboration/README.md) 为准。
+
 A1 向后兼容补充：新增 `PlatformStore.access()`、schema 3 和权限 / 通知 / 审计页面；原工作流与通知接口签名不变。详见 [A1 交接说明](A1-权限与公共页面交接.md)，代码是否已进入 main 以 A1 PR 合并状态为准。
 
 2026-09-15：PR #1/#2 均已合并，代码基线 c8198f70cd4dabece3ce22c21f4611de056c42d5。用户初步安装测试后授权 A1/B1 并行；当前有效任务以 [协作入口](ai-collaboration/README.md) 为准，取代下方历史暂缓文字。现有 WorkflowService 和 NotificationService 签名在 B1 期间保持兼容，A1 只作向后兼容新增。

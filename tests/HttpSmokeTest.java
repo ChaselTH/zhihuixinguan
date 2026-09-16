@@ -27,7 +27,7 @@ public final class HttpSmokeTest {
     Process server=new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin","java").toString(),"-Dfile.encoding=UTF-8","-cp",app.resolve("app/zhihui-xinguan.jar")+File.pathSeparator+app.resolve("app/lib")+File.separator+"*","Main","--root",httpRoot.toString(),"--data-root",data.toString(),"--bind","127.0.0.1","--port",""+port).redirectErrorStream(true).redirectOutput(data.resolve("server.log").toFile()).start();
     try{
       boolean ready=false;for(int i=0;i<100;i++){try{if(get("/health").statusCode()==200){ready=true;break;}}catch(IOException ignored){}Thread.sleep(100);}check(ready,"server ready");
-      check(get("/health").body().contains("SCHEMA=3"),"health reports migrated schema version");
+      check(get("/health").body().contains("SCHEMA=4"),"health reports migrated schema version");
       check(get("/export?dataset=multi").statusCode()==303,"anonymous export requires login");
       loginAndChange(superNumber,password,false);
       check(get("/bootstrap.local.properties").statusCode()==404&&get("/assets/bootstrap.local.properties").statusCode()==404,"local initialization file is never served by HTTP");
@@ -103,6 +103,7 @@ public final class HttpSmokeTest {
       check(get("/details?dataset=multi&month=2026-09").body().contains("保存资料补充"),"reviewer may directly fill own branch");
       AccessHttpTest.run(superClient,divisionClient,branchClient,operatorClient);
       WorkflowIntegrationHttpTest.run(superClient,divisionClient,branchClient,operatorClient,reviewerClient);
+      ImportHttpTest.run(superClient,divisionClient,branchClient,operatorClient,reviewerClient);
       client=superClient;
       Map<String,String> editReviewer=hidden(get("/people/edit?id="+reviewer.id()).body());editReviewer.put("name","已转金坛");editReviewer.put("role","OPERATOR");editReviewer.put("organization","JINTAN");editReviewer.put("active","true");
       check(post("/people/update",editReviewer).statusCode()==303,"super changes role and organization");

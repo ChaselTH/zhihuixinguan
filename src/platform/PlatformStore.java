@@ -15,6 +15,7 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
   private final Connection db;
   private final WorkflowEngine workflow;
   private final AccessPlatform access;
+  private final ImportPlatform importing;
   private final java.util.function.Consumer<String> checkpoint;
   public record CreatedUser(UserAccount user,String initialPassword){}
   private static final Passwords.Encoded DUMMY=Passwords.encode(UUID.randomUUID().toString());
@@ -79,7 +80,9 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
     try {initialize();}catch(Exception e){db.close();throw e;}
     workflow=new WorkflowEngine(this,db,clock,checkpoint);
     access=new AccessPlatform(this,db,workflow,clock,checkpoint);
+    importing=new ImportPlatform(this,db,clock,checkpoint);
   }
+  public ImportPlatform importing() { return importing; }
   public AccessPlatform access() { return access; }
   public WorkflowContracts.WorkflowService workflow() { return workflow; }
   public NotificationService notifications() { return workflow; }
@@ -153,12 +156,20 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
       String prior=repeat(actor,requestId,payload);
       if(prior!=null){try(PreparedStatement st=statement("SELECT * FROM import_batches WHERE id=?",prior);ResultSet rs=st.executeQuery()){if(!rs.next())throw new SQLException("导入幂等记录缺失");return new ImportOutcome(prior,rs.getInt("added_count"),rs.getInt("duplicate_count"),rs.getInt("preserved_count"));}}
       if(expectedBaseline!=null&&!expectedBaseline.equals(baseline(list(actor,dataset,null,null))))throw new ConcurrentModificationException("预览期间正式数据已变化，请重新上传核对；本次未导入");
+      Set<String> replace=new HashSet<>();if(overwrite)for(var row:incoming)replace.add(fingerprint(row));
+      ImportOutcome outcome=applyImport(actor,dataset,incoming,replace,requestId);
+      remember(actor,requestId,payload,outcome.batchId());return outcome;
+    });
+  }
+  /** Caller owns the transaction and has checked identity, preview and decisions. */
+  ImportOutcome applyImport(ActorContext actor,String dataset,List<BusinessRecord> incoming,Set<String> replace,String requestId)throws SQLException {
+      AccessPolicy.require(actor,AccessPolicy.Action.UPLOAD,Organizations.DIVISION);
       int added=0,duplicates=0,preserved=0;
       for(BusinessRecord candidate:incoming) {
         DatasetSchema schema=DatasetSchema.get(candidate.dataset());
         if(!dataset.equals(candidate.dataset())||candidate.values().size()!=schema.width()||!Organizations.BRANCHES.containsKey(candidate.organizationId()))throw new IllegalArgumentException("导入数据类型、机构或列数不正确");
         for(int i=0;i<schema.width();i++)if(schema.editable(i))schema.validateEdit(i,candidate.values().get(i));
-        String fingerprint=fingerprint(candidate);BusinessRecord old=null;
+        String fingerprint=fingerprint(candidate);boolean overwrite=replace.contains(fingerprint);BusinessRecord old=null;
         try(PreparedStatement st=statement("SELECT * FROM official_records WHERE source_fingerprint=? FOR UPDATE",fingerprint);ResultSet rs=st.executeQuery()){
           if(rs.next())old=read(rs);if(rs.next())throw new IllegalArgumentException("存在多条相同历史来源记录，请先核对，未自动覆盖");
         }
@@ -176,11 +187,11 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
             audit(actor,old.organizationId(),old.id(),"IMPORT_UPDATE",requestId,Codec.encode(old.values()),Codec.encode(values),overwrite?"已确认覆盖填报内容（包括空白）":"保留已有填报内容");
           }
         }
+        checkpoint.accept("import-row-written");
       }
       String batch=UUID.randomUUID().toString();
       exec("INSERT INTO import_batches VALUES(?,?,?,?,?,?,?)",batch,actor.userId(),dataset,Instant.now().toString(),added,duplicates,preserved);
-      remember(actor,requestId,payload,batch);return new ImportOutcome(batch,added,duplicates,preserved);
-    });
+      checkpoint.accept("import-batch-written");return new ImportOutcome(batch,added,duplicates,preserved);
   }
   public synchronized int migrateLegacy(List<LegacyItem> items) {
     return transaction(()->{
