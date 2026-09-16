@@ -17,14 +17,19 @@ if ($LASTEXITCODE -ne 0 -or @($modes | Where-Object { $_ -notmatch '^100(644|755
 $dist=Join-Path $projectRoot 'dist'
 if ((Test-Path -LiteralPath $dist) -and ((Get-Item -LiteralPath $dist).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Release directory must not be a link' }
 $name="zhihui-xinguan-source-$version"
-$output=Join-Path $dist $name
-$archive=Join-Path $dist "$name.tar"
+$snapshotName="$name-$($commit.Substring(0,8))"
+$output=Join-Path $dist $snapshotName
+$archive=Join-Path $dist "$snapshotName.zip"
 if ((Test-Path -LiteralPath $output) -or (Test-Path -LiteralPath $archive)) { throw 'Source release already exists; never overwrite it' }
 New-Item -ItemType Directory -Path $output | Out-Null
-& git -C $projectRoot archive --format=tar "--output=$archive" HEAD
+& git -C $projectRoot archive --format=zip "--output=$archive" HEAD
 if ($LASTEXITCODE -ne 0) { throw 'Source archive failed' }
-& tar.exe -xf $archive -C $output
-if ($LASTEXITCODE -ne 0) { throw 'Source extraction failed' }
+# Windows bsdtar can misdecode Git tar paths containing Chinese; ZIP preserves UTF-8 filenames.
+Expand-Archive -LiteralPath $archive -DestinationPath $output
+foreach ($relative in $tracked) {
+    if (-not (Test-Path -LiteralPath (Join-Path $output $relative) -PathType Leaf)) { throw "Source file missing after extraction: $relative" }
+}
+if (@(Get-ChildItem -LiteralPath $output -File -Recurse -Force).Count -ne $tracked.Count) { throw 'Extracted source file count mismatch' }
 # Add only the locked JAR dependencies so source can be built offline with a local JDK and Node.
 $dependencies=(Get-Content -LiteralPath (Join-Path $output 'dependencies.lock.json') -Raw | ConvertFrom-Json).dependencies
 $vendor=Join-Path $output 'vendor\dependencies'
