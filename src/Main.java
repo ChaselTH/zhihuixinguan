@@ -34,7 +34,7 @@ public final class Main extends HttpSupport {
       AccessPages access=new AccessPages(version,session);
       if(path.equals("/access/apply")) {
         if(method.equals("GET")){sendHtml(x,200,access.apply(auth.applicationCsrf(x),query(x.getRequestURI()).get("scope")));return;}
-        if(method.equals("POST")){requireForm(x);Map<String,String> f=decodeForm(readLimited(x.getRequestBody(),8192));if(!auth.consumeApplicationCsrf(x,f.get("csrf")))throw new SecurityException("申请页面已失效，请重新打开申请页");if(!auth.allowApplication(x.getRemoteAddress().getAddress().getHostAddress())){sendHtml(x,429,access.error(429,"申请过于频繁，请十分钟后再试或联系管理员"));return;}store.platform.access().apply(f.get("number"),f.get("name"),f.get("organization"));redirect(x,"/access/received");return;}
+        if(method.equals("POST")){requireForm(x);Map<String,String> f=decodeForm(readLimited(x.getRequestBody(),8192));if(!auth.consumeApplicationCsrf(x,f.get("csrf")))throw new SecurityException("申请页面已失效，请重新打开申请页");if(!auth.allowApplication(x.getRemoteAddress().getAddress().getHostAddress())){sendHtml(x,429,access.error(429,"申请过于频繁，请十分钟后再试或联系管理员"));return;}try{String roleText=f.get("requestedRole");if("__legacy__".equals(roleText))store.platform.access().apply(f.get("number"),f.get("name"),f.get("organization"));else {if((roleText==null||roleText.isBlank())&&"yes".equals(f.get("roleRequired")))throw new IllegalArgumentException("请选择拟申请角色");if(roleText==null||roleText.isBlank())store.platform.access().apply(f.get("number"),f.get("name"),f.get("organization"));else store.platform.access().apply(f.get("number"),f.get("name"),f.get("organization"),Role.valueOf(roleText));}}catch(IllegalArgumentException|IllegalStateException e){sendHtml(x,400,access.error(400,e.getMessage()));return;}redirect(x,"/access/received");return;}
       }
       if(method.equals("GET")&&path.equals("/access/received")){sendHtml(x,200,access.receipt());return;}
       if(method.equals("GET")&&(path.equals("/admin")||path.equals("/admin/"))){redirect(x,session==null?"/login":"/");return;}
@@ -54,7 +54,7 @@ public final class Main extends HttpSupport {
         if(path.equals("/access/requests")){boolean only=!"yes".equals(q.get("all"));int offset=integer(q.get("offset"),0);sendHtml(x,200,access.applications(store.platform.access().applications(session.actor,only,offset,25),only,offset));return;}
         if(path.equals("/access/request")){var request=store.platform.access().application(session.actor,q.get("id"));sendHtml(x,200,access.application(request,store.platform.access().canDecide(session.actor,request)));return;}
         if(path.equals("/notifications")){boolean unread="yes".equals(q.get("unread"));int offset=integer(q.get("offset"),0);sendHtml(x,200,new NotificationPages(version,session).inbox(store.platform.notifications().inbox(session.actor,unread,offset,25),unread,offset));return;}
-        if(path.equals("/notifications/detail")){var notice=store.platform.access().notice(session.actor,q.get("id"));sendHtml(x,200,new NotificationPages(version,session).detail(notice,store.platform.access().noticeApplication(session.actor,notice.id())));return;}
+        if(path.equals("/notifications/detail")){store.platform.notifications().markRead(session.actor,q.get("id"));var notice=store.platform.access().notice(session.actor,q.get("id"));sendHtml(x,200,new NotificationPages(version,session).detail(notice,store.platform.access().noticeApplication(session.actor,notice.id())));return;}
         if(path.equals("/audit")){int offset=integer(q.get("offset"),0);var filter=new AccessPlatform.AuditFilter(q.get("category"),q.get("organization"),q.get("dataset"),q.get("search"),auditDate(q.get("from")),auditDate(q.get("through")));String submissionId=limit(q.get("submissionId"),80);var rows=submissionId.isEmpty()?store.platform.access().audit(session.actor,filter,offset,25):store.platform.access().auditForSubmission(session.actor,submissionId,filter,offset,25);sendHtml(x,200,new AuditPages(version,session).audit(rows,q,offset));return;}
         if(path.equals("/login")){redirect(x,"/");return;}
         if(path.equals("/account/password")){if(auth.passwordChangeExpired(session)){passwordRelogin(x);return;}sendHtml(x,200,identity.password(""));return;}
@@ -65,7 +65,7 @@ public final class Main extends HttpSupport {
         }
         if(path.equals("/foundation")){if(!AccessPolicy.all(session.actor))throw new SecurityException("没有全行基础状态查看权限");sendHtml(x,200,imports.diagnostics(store.platform.schemaVersion(),store.platform.diagnostics(),store.platform.auditEvents(session.actor,100)));return;}
       }
-      if(method.equals("POST")&&path.startsWith("/imports/upload/")){importing.upload(x,session,path.substring("/imports/upload/".length()));return;}
+      if(method.equals("POST")&&(path.equals("/imports/upload")||path.startsWith("/imports/upload/"))){importing.upload(x,session,path.equals("/imports/upload")?"bundle":path.substring("/imports/upload/".length()));return;}
       if(method.equals("POST")){
         requireForm(x);Map<String,String> f=decodeForm(readLimited(x.getRequestBody(),2*1024*1024));if(!auth.csrf(session,f.get("csrf")))throw new SecurityException("页面校验已失效，请刷新后重试");
         if(importing.post(x,session,f))return;
@@ -79,6 +79,7 @@ public final class Main extends HttpSupport {
           case "/people/create" -> {if(!PlatformStore.isManager(session.actor))throw new SecurityException("没有人员管理权限");try{sendHtml(x,200,identity.created(store.platform.createUser(session.actor,f.get("authNumber"),f.get("name"),Role.valueOf(f.getOrDefault("role","")),userOrganization(f))));}catch(IllegalArgumentException e){sendHtml(x,400,identity.userForm(null,f,e.getMessage()));}return;}
           case "/people/update" -> {UserAccount old=store.platform.managedUser(session.actor,f.get("id"));try{store.platform.updateUser(session.actor,old.id(),Long.parseLong(f.get("revision")),f.get("name"),Role.valueOf(f.getOrDefault("role","")),userOrganization(f),"true".equals(f.get("active")));}catch(IllegalArgumentException e){sendHtml(x,400,identity.userForm(old,f,e.getMessage()));return;}redirect(x,"/people");return;}
           case "/people/reset-password" -> {if(!"yes".equals(f.get("confirmReset")))throw new IllegalArgumentException("请先勾选重置密码确认");sendHtml(x,200,identity.created(store.platform.resetUserPassword(session.actor,f.get("id"),Long.parseLong(f.get("revision")))));return;}
+          case "/people/initial-password" -> {UserAccount user=store.platform.managedUser(session.actor,f.get("id"));sendHtml(x,200,identity.initialPassword(user,store.platform.initialPassword(session.actor,user.id())));return;}
           case "/people/disable" -> {if(!"yes".equals(f.get("confirmDisable")))throw new IllegalArgumentException("请先勾选停用确认");UserAccount old=store.platform.managedUser(session.actor,f.get("id"));store.platform.updateUser(session.actor,old.id(),Long.parseLong(f.get("revision")),old.name(),old.role(),old.organizationId(),false);redirect(x,"/people");return;}
           case "/update-batch" -> {save(x,session,f);return;}
           default -> {}
@@ -88,6 +89,7 @@ public final class Main extends HttpSupport {
     }catch(SecurityException e){sendHtml(x,403,new PageLayout(version,session).error(403,e.getMessage()));}
     catch(WorkflowContracts.WorkflowException e){int status=switch(e.code()){case NOT_FOUND->404;case INVALID_INPUT,NO_REVIEWER,OWNER_CHANGED->400;case TRANSACTION_FAILED->500;default->409;};sendHtml(x,status,new PageLayout(version,session).error(status,e.getMessage()));}
     catch(ConcurrentModificationException e){sendHtml(x,409,new PageLayout(version,session).error(409,e.getMessage()));}
+    catch(IllegalStateException e){sendHtml(x,400,new PageLayout(version,session).error(400,e.getMessage()));}
     catch(IllegalArgumentException|WorkbookImportException e){sendHtml(x,400,new PageLayout(version,session).error(400,e.getMessage()));}
     catch(RequestTooLargeException e){sendHtml(x,413,new PageLayout(version,session).error(413,"请求内容过大：普通表单最多 2 MB，上传批次最多 50 MB，请分批处理"));}
     catch(Exception e){e.printStackTrace();sendHtml(x,500,new PageLayout(version,session).error(500,"处理失败，请查看启动终端；未确认的操作不会写入"));}

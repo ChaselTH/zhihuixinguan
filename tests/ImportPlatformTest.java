@@ -61,6 +61,8 @@ public final class ImportPlatformTest {
     var paged=p.stage(f.div,"multi",many,0);check(p.preview(f.div,paged.id(),0,25).items().size()==25&&p.preview(f.div,paged.id(),25,25).items().size()==6,"full preview pagination");
     p.choices(f.div,paged.id(),1,Map.of(1,Choice.SKIP),null);p.choices(f.div,paged.id(),2,Map.of(31,Choice.SKIP),null);
     check(p.preview(f.div,paged.id(),0,25).items().get(0).choice()==Choice.SKIP,"later page retains previous page choice");p.cancel(f.div,paged.id(),3);
+    var bundleRows=List.of(source(newRecord("negative","WUJIN","bundle-negative")),source(newRecord("multi","WUJIN","bundle-multi")),source(newRecord("cross","WUJIN","bundle-cross")));
+    var bundle=p.stageBundle(f.div,bundleRows,0);check(bundle.dataset().equals("bundle")&&bundle.count()==3,"unified staging keeps all three data sheets in one job");check(p.preview(f.div,bundle.id(),0,25).items().size()==3,"unified preview exposes all staged source rows");var bundleResult=p.confirm(f.div,bundle.id(),1,"saved",false,false);check(bundleResult.added()==3&&f.store.list(f.div,null,null,null).stream().filter(record->record.filename().equals("synthetic.xlsx")).count()>=3,"unified confirmation writes all sheets atomically");check(p.confirm(f.div,bundle.id(),1,"saved",false,false).equals(bundleResult),"unified confirmation retry is idempotent");
   }
   static void conflictsAndRollback(WorkflowPlatformTest.Fixture f)throws Exception {
     var p=f.store.importing();var r=f.record("WUJIN","cross");var pending=f.pending(f.op,r,"待审不丢失");

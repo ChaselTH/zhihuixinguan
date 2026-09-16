@@ -13,16 +13,17 @@ final class ImportRoutes extends HttpSupport {
     switch(path){
       case "/imports" -> sendHtml(x,200,new ImportPages(version,s).imports(s,limit(q.get("notice"),800),"1".equals(q.get("error"))));
       case "/imports/jobs" -> {int offset=offset(q);sendHtml(x,200,pages.history(importing.jobs(s.actor,offset,25),offset));}
-      case "/imports/preview" -> {int offset=offset(q);sendHtml(x,200,pages.preview(importing.preview(s.actor,q.get("token"),offset,25),offset));}
-      case "/template" -> {String dataset=q.get("dataset");sendDownload(x,new ExcelExporter().template(dataset),DatasetSchema.get(dataset).label+"_模板_v1.xlsx");}
+       case "/imports/preview" -> {int offset=offset(q);sendHtml(x,200,pages.preview(importing.preview(s.actor,q.get("token"),offset,25),offset,"yes".equals(q.get("details"))));}
+       case "/template" -> {String dataset=q.get("dataset");if("bundle".equals(dataset))sendDownload(x,new ExcelExporter().templateBundle(),"智慧信管三表统一模板_v1.xlsx");else sendDownload(x,new ExcelExporter().template(dataset),DatasetSchema.get(dataset).label+"_模板_v1.xlsx");}
       default -> throw new IllegalStateException();
     }return true;
   }
   void upload(HttpExchange x,AuthService.Session s,String dataset)throws Exception{
-    DatasetSchema.get(dataset);AccessPolicy.require(s.actor,AccessPolicy.Action.UPLOAD,Organizations.DIVISION);
+     boolean bundle="bundle".equals(dataset);if(!bundle)DatasetSchema.get(dataset);AccessPolicy.require(s.actor,AccessPolicy.Action.UPLOAD,Organizations.DIVISION);
     String type=x.getRequestHeaders().getFirst("Content-Type");if(type==null||!type.toLowerCase(Locale.ROOT).startsWith("multipart/form-data"))throw new IllegalArgumentException("上传格式错误");String boundary=boundary(type);if(boundary.isBlank()||boundary.length()>200)throw new IllegalArgumentException("上传边界错误");
     Multipart form=parseMultipart(readLimited(x.getRequestBody(),50*1024*1024),boundary);if(!auth.csrf(s,form.fields.get("csrf")))throw new SecurityException("页面校验已失效");
-    if(form.files.isEmpty()||form.files.size()>10)throw new IllegalArgumentException("请选择 1～10 个文件");
+     if(form.files.isEmpty()||form.files.size()>10)throw new IllegalArgumentException("请选择 1～10 个完整工作簿");
+     if(bundle){List<ImportPlatform.SourceRow> bundleRows=new ArrayList<>();List<WorkbookImporter.Issue> bundleErrors=new ArrayList<>();Map<String,Set<String>> periods=new HashMap<>();int bundleSkipped=0;long bundleCharacters=0;for(Part file:form.files){if(file.data.length==0||file.data.length>20*1024*1024){bundleErrors.add(new WorkbookImporter.Issue(file.filename,"",0,"","文件不能为空，且单文件不能超过 20 MB"));continue;}var parsed=reader.inspectBundle(file.data,file.filename,form.fields.get("month"),form.fields.get("period"));bundleErrors.addAll(parsed.errors());bundleSkipped+=parsed.skippedExamples();for(var source:parsed.sources()){for(String value:source.record().values())bundleCharacters+=value.length();periods.computeIfAbsent(source.record().dataset(),key->new LinkedHashSet<>()).add(source.record().period().key());}bundleRows.addAll(parsed.sources());if(bundleRows.size()>20000)throw new IllegalArgumentException("一批最多 20000 条，请分批上传");}if(bundleCharacters>8_000_000)throw new IllegalArgumentException("本批单元格文字合计超过 800 万字，请分批上传；本批全部未导入");if(!bundleErrors.isEmpty()){sendHtml(x,400,new ImportJobPages(version,s).errors(bundleErrors));return;}if(periods.values().stream().anyMatch(set->set.size()>1))throw new IllegalArgumentException("本批包含多个期次，请分开上传或为每行补充明确期次后重试；未写入任何数据");if(bundleRows.isEmpty()){adminRedirect(x,"格式校验通过，三张数据表未发现业务数据；跳过示例／说明 "+bundleSkipped+" 条。空模板未写入正式数据。",false);return;}var job=importing.stageBundle(s.actor,bundleRows,bundleSkipped);sendHtml(x,200,new ImportJobPages(version,s).preview(importing.preview(s.actor,job.id(),0,25),0));return;}
     List<ImportPlatform.SourceRow> rows=new ArrayList<>();List<WorkbookImporter.Issue> errors=new ArrayList<>();int skipped=0;long characters=0;
     for(Part file:form.files){
       if(file.data.length==0||file.data.length>20*1024*1024){errors.add(new WorkbookImporter.Issue(file.filename,"",0,"","文件不能为空，且单文件不能超过 20 MB"));continue;}

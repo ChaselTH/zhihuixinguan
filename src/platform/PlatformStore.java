@@ -6,6 +6,10 @@ import java.nio.file.*;
 import java.sql.*;
 import java.time.*;
 import java.util.*;
+import java.security.GeneralSecurityException;
+import javax.crypto.Cipher;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
 
 /** Single-process embedded store. All official mutations and their audit rows commit together. */
 public final class PlatformStore implements RecordRepository, OfficialDataWriter, AutoCloseable {
@@ -17,6 +21,9 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
   private final AccessPlatform access;
   private final ImportPlatform importing;
   private final java.util.function.Consumer<String> checkpoint;
+  private final Path platformDir;
+  private final Path initialPasswordKeyFile;
+  private final byte[] initialPasswordKey;
   public record CreatedUser(UserAccount user,String initialPassword){}
   private static final Passwords.Encoded DUMMY=Passwords.encode(UUID.randomUUID().toString());
   public synchronized boolean hasUsers(){try(Statement st=db.createStatement();ResultSet rs=st.executeQuery("SELECT COUNT(*) FROM users")){rs.next();return rs.getInt(1)>0;}catch(SQLException e){throw failure(e);}}
@@ -52,20 +59,46 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
   CreatedUser createUserInTransaction(ActorContext a,String number,String name,Role role,String org)throws SQLException {
     currentIdentity(a);validateUser(number,name,role,org);if(!AccessPolicy.canManage(a,role,org))throw new SecurityException("不能创建该角色或其他支行的账号");
     try(PreparedStatement st=statement("SELECT id FROM users WHERE auth_number=?",number.strip());ResultSet rs=st.executeQuery()){if(rs.next())throw new IllegalArgumentException("统一认证号已存在（包括已停用账号），请修改或恢复原账号");}
-    String id="user-"+UUID.randomUUID(),password=Passwords.temporary();insertUser(id,number.strip(),name.strip(),role,org,Passwords.encode(password));UserAccount u=loadUser(id);audit(a,org,id,"USER_CREATE",UUID.randomUUID().toString(),"",userSummary(u),"初始密码仅显示一次，不记入日志");return new CreatedUser(u,password);
+    String id="user-"+UUID.randomUUID(),password=Passwords.temporary();insertUser(id,number.strip(),name.strip(),role,org,Passwords.encode(password),encryptInitialPassword(password));UserAccount u=loadUser(id);audit(a,org,id,"USER_CREATE",UUID.randomUUID().toString(),"",userSummary(u),"初始密码仅显示一次，不记入日志");return new CreatedUser(u,password);
   }
   public synchronized void updateUser(ActorContext a,String id,long revision,String name,Role role,String org,boolean active){transaction(()->{
     currentIdentity(a);UserAccount old=loadUser(id);requireManage(a,old);validateUser(old.authNumber(),name,role,org);if(!AccessPolicy.canManage(a,role,org))throw new SecurityException("不能转移到该机构或提升到该角色");if(old.revision()!=revision)throw new ConcurrentModificationException("人员信息已变化，请刷新后再操作");
-    exec("UPDATE users SET display_name=?,role=?,organization_id=?,active=?,revision=revision+1 WHERE id=?",name.strip(),role.name(),org,active,id);audit(a,old.organizationId(),id,active?"USER_UPDATE":"USER_DISABLE",UUID.randomUUID().toString(),userSummary(old),userSummary(loadUser(id)),"原会话失效；删除按停用处理，保留历史");return null;
+    if(!active&&old.active()&&hasOpenResponsibilities(old))throw new IllegalStateException("该人员仍有待处理申请或复核事项，请先安排替代管理员后再删除");
+    exec("UPDATE users SET display_name=?,role=?,organization_id=?,active=?,initial_password_ciphertext=?,revision=revision+1 WHERE id=?",name.strip(),role.name(),org,active,active?initialCiphertext(id):null,id);audit(a,old.organizationId(),id,active?"USER_UPDATE":"USER_DISABLE",UUID.randomUUID().toString(),userSummary(old),userSummary(loadUser(id)),"原会话失效；删除按停用处理，保留历史");return null;
   });}
-  public synchronized CreatedUser resetUserPassword(ActorContext a,String id,long revision){return transaction(()->{currentIdentity(a);UserAccount old=loadUser(id);requireManage(a,old);if(old.revision()!=revision)throw new ConcurrentModificationException("人员信息已变化，请刷新后重试");String password=Passwords.temporary();Passwords.Encoded hash=Passwords.encode(password);exec("UPDATE users SET password_hash=?,password_salt=?,must_change_password=TRUE,revision=revision+1 WHERE id=?",hash.hash(),hash.salt(),id);audit(a,old.organizationId(),id,"USER_PASSWORD_RESET",UUID.randomUUID().toString(),"","","要求下次登录改密；不记录密码");return new CreatedUser(loadUser(id),password);});}
+  public synchronized CreatedUser resetUserPassword(ActorContext a,String id,long revision){return transaction(()->{currentIdentity(a);UserAccount old=loadUser(id);requireManage(a,old);if(old.revision()!=revision)throw new ConcurrentModificationException("人员信息已变化，请刷新后重试");String password=Passwords.temporary();Passwords.Encoded hash=Passwords.encode(password);exec("UPDATE users SET password_hash=?,password_salt=?,must_change_password=TRUE,initial_password_ciphertext=?,revision=revision+1 WHERE id=?",hash.hash(),hash.salt(),encryptInitialPassword(password),id);audit(a,old.organizationId(),id,"USER_PASSWORD_RESET",UUID.randomUUID().toString(),"","","要求下次登录改密；不记录密码");return new CreatedUser(loadUser(id),password);});}
+  /** Returns an unmodified generated credential only to an authorized manager. */
+  public synchronized String initialPassword(ActorContext a,String id){return transaction(()->{currentIdentity(a);UserAccount user=loadUser(id);requireManage(a,user);String cipher=initialCiphertext(id);if(cipher==null||cipher.isBlank())throw new IllegalStateException("初始密码已修改或旧账号没有可恢复凭据，请重置密码");String value=decryptInitialPassword(cipher);audit(a,user.organizationId(),id,"USER_INITIAL_PASSWORD_VIEW",UUID.randomUUID().toString(),"","","查看未修改的临时密码");return value;});}
   /** The HTTP caller must verify CSRF and a recent login through AuthService first. */
   public synchronized void changeOwnPassword(ActorContext a,String next){transaction(()->{
-    if(a==null)throw new SecurityException("请先登录");UserAccount old=loadUser(a.userId());if(old==null||!old.active()||old.revision()!=a.identityRevision()||old.role()!=a.role()||!old.organizationId().equals(a.organizationId()))throw new SecurityException("账号状态已变化，请重新登录");Passwords.validate(next);if(authenticateUser(old.authNumber(),next)!=null)throw new IllegalArgumentException("新密码不能与当前密码相同");Passwords.Encoded encoded=Passwords.encode(next);exec("UPDATE users SET password_hash=?,password_salt=?,must_change_password=FALSE,revision=revision+1 WHERE id=?",encoded.hash(),encoded.salt(),old.id());audit(a,old.organizationId(),old.id(),"PASSWORD_CHANGE",UUID.randomUUID().toString(),"","","本人修改密码，会话失效");return null;
+    if(a==null)throw new SecurityException("请先登录");UserAccount old=loadUser(a.userId());if(old==null||!old.active()||old.revision()!=a.identityRevision()||old.role()!=a.role()||!old.organizationId().equals(a.organizationId()))throw new SecurityException("账号状态已变化，请重新登录");Passwords.validate(next);if(authenticateUser(old.authNumber(),next)!=null)throw new IllegalArgumentException("新密码不能与当前密码相同");Passwords.Encoded encoded=Passwords.encode(next);exec("UPDATE users SET password_hash=?,password_salt=?,must_change_password=FALSE,initial_password_ciphertext=NULL,revision=revision+1 WHERE id=?",encoded.hash(),encoded.salt(),old.id());audit(a,old.organizationId(),old.id(),"PASSWORD_CHANGE",UUID.randomUUID().toString(),"","","本人修改密码，会话失效");return null;
   });}
-  private void insertUser(String id,String number,String name,Role role,String org,Passwords.Encoded hash)throws SQLException{exec("INSERT INTO users(id,auth_number,display_name,role,organization_id,active,password_hash,password_salt,must_change_password,revision) VALUES(?,?,?,?,?,TRUE,?,?,?,1)",id,number,name,role.name(),org,hash.hash(),hash.salt(),role!=Role.SUPER_ADMIN);}
+  private void insertUser(String id,String number,String name,Role role,String org,Passwords.Encoded hash)throws SQLException{insertUser(id,number,name,role,org,hash,null);}
+  private void insertUser(String id,String number,String name,Role role,String org,Passwords.Encoded hash,String initialCipher)throws SQLException{exec("INSERT INTO users(id,auth_number,display_name,role,organization_id,active,password_hash,password_salt,must_change_password,revision,initial_password_ciphertext) VALUES(?,?,?,?,?,TRUE,?,?,?,1,?)",id,number,name,role.name(),org,hash.hash(),hash.salt(),role!=Role.SUPER_ADMIN,initialCipher);}
   private static void validateUser(String number,String name,Role role,String org){if(number==null||!number.strip().matches("[0-9]{6,20}"))throw new IllegalArgumentException("统一认证号应为 6～20 位数字，保留前导零");if(name==null||name.strip().isEmpty()||name.strip().length()>100)throw new IllegalArgumentException("姓名需要 1～100 个字符");new ActorContext("validation",name,role,org);}
   private static String userSummary(UserAccount u){return Codec.encode(List.of(u.authNumber(),u.name(),u.role().name(),u.organizationId(),Boolean.toString(u.active())));}
+  private boolean hasOpenResponsibilities(UserAccount u)throws SQLException {
+    if(u==null)return false;
+    if(u.role()==Role.BRANCH_ADMIN){
+      if(count("SELECT COUNT(*) FROM users WHERE active=TRUE AND role='BRANCH_ADMIN' AND organization_id=?",u.organizationId())<=1&&count("SELECT COUNT(*) FROM access_requests WHERE state IN ('PENDING','ESCALATED') AND route_level='BRANCH' AND organization_id=? AND requested_role IS NOT NULL",u.organizationId())>0)return true;
+    }
+    if(u.role()==Role.REVIEWER){
+      if(count("SELECT COUNT(*) FROM users WHERE active=TRUE AND role='REVIEWER' AND organization_id=?",u.organizationId())<=1&&count("SELECT COUNT(*) FROM submissions WHERE state='PENDING' AND organization_id=?",u.organizationId())>0)return true;
+    }
+    return false;
+  }
+  private int count(String sql,Object...args)throws SQLException {try(PreparedStatement st=statement(sql,args);ResultSet rs=st.executeQuery()){rs.next();return rs.getInt(1);}}
+  private String initialCiphertext(String id)throws SQLException {try(PreparedStatement st=statement("SELECT initial_password_ciphertext FROM users WHERE id=?",id);ResultSet rs=st.executeQuery()){return rs.next()?rs.getString(1):null;}}
+  private byte[] loadOrCreateInitialPasswordKey()throws IOException {
+    if(Files.exists(initialPasswordKeyFile)){
+      byte[] key=Files.readAllBytes(initialPasswordKeyFile);if(key.length!=32)throw new IOException("初始密码密钥长度无效，请使用备份恢复或重置临时密码");return key;
+    }
+    byte[] key=new byte[32];new java.security.SecureRandom().nextBytes(key);
+    try{Files.write(initialPasswordKeyFile,key,StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE);try{Files.setPosixFilePermissions(initialPasswordKeyFile,Set.of(java.nio.file.attribute.PosixFilePermission.OWNER_READ,java.nio.file.attribute.PosixFilePermission.OWNER_WRITE));}catch(UnsupportedOperationException ignored){}}catch(FileAlreadyExistsException e){return loadOrCreateInitialPasswordKey();}
+    return key;
+  }
+  private String encryptInitialPassword(String value){try{byte[] nonce=new byte[12];new java.security.SecureRandom().nextBytes(nonce);Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.ENCRYPT_MODE,new SecretKeySpec(initialPasswordKey,"AES"),new GCMParameterSpec(128,nonce));byte[] encrypted=cipher.doFinal(value.getBytes(StandardCharsets.UTF_8));byte[] all=new byte[nonce.length+encrypted.length];System.arraycopy(nonce,0,all,0,nonce.length);System.arraycopy(encrypted,0,all,nonce.length,encrypted.length);return Base64.getEncoder().encodeToString(all);}catch(GeneralSecurityException e){throw new IllegalStateException("无法安全保存初始密码",e);}}
+  private String decryptInitialPassword(String encoded){try{byte[] all=Base64.getDecoder().decode(encoded);if(all.length<28)throw new GeneralSecurityException();Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.DECRYPT_MODE,new SecretKeySpec(initialPasswordKey,"AES"),new GCMParameterSpec(128,Arrays.copyOf(all,12)));return new String(cipher.doFinal(Arrays.copyOfRange(all,12,all.length)),StandardCharsets.UTF_8);}catch(Exception e){throw new IllegalStateException("无法安全恢复临时密码，请重置密码",e);}}
   public PlatformStore(Path dataRoot) throws Exception { this(dataRoot,Clock.systemUTC(),point->{}); }
   /** Package-private clock/fault seam for isolated tests; never configured through HTTP or environment. */
   PlatformStore(Path dataRoot,Clock clock,java.util.function.Consumer<String> checkpoint) throws Exception {
@@ -73,6 +106,7 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
     Path dir=dataRoot.toAbsolutePath().normalize().resolve("platform");
     Files.createDirectories(dir);
     if(Files.isSymbolicLink(dir))throw new IOException("数据目录不能是符号链接");
+    platformDir=dir;initialPasswordKeyFile=dir.resolve("initial-password.key");initialPasswordKey=loadOrCreateInitialPasswordKey();
     String path=dir.resolve("records").toString().replace('\\','/');
     if(path.contains(";"))throw new IOException("数据目录不能包含分号");
     Class.forName("org.h2.Driver");
@@ -89,6 +123,10 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
   public int schemaVersion() { return SchemaMigrations.CURRENT_VERSION; }
   private void initialize() throws Exception {
     SchemaMigrations.apply(db,checkpoint);
+    // FEEDBACK-001 extends the released schema-4 database in place.
+    exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS initial_password_ciphertext CLOB");
+    exec("ALTER TABLE access_requests ADD COLUMN IF NOT EXISTS requested_role VARCHAR(32)");
+    exec("CREATE INDEX IF NOT EXISTS idx_access_requested_role ON access_requests(requested_role)");
     exec("MERGE INTO organizations KEY(id) VALUES(?,?,NULL)",Organizations.DIVISION,"分行");
     exec("MERGE INTO organizations KEY(id) VALUES(?,?,?)",Organizations.UNASSIGNED,"待确认机构",Organizations.DIVISION);
     for(var e:Organizations.BRANCHES.entrySet())exec("MERGE INTO organizations KEY(id) VALUES(?,?,?)",e.getKey(),e.getValue(),Organizations.DIVISION);
@@ -167,7 +205,7 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
       int added=0,duplicates=0,preserved=0;
       for(BusinessRecord candidate:incoming) {
         DatasetSchema schema=DatasetSchema.get(candidate.dataset());
-        if(!dataset.equals(candidate.dataset())||candidate.values().size()!=schema.width()||!Organizations.BRANCHES.containsKey(candidate.organizationId()))throw new IllegalArgumentException("导入数据类型、机构或列数不正确");
+        if(!"bundle".equals(dataset)&&!dataset.equals(candidate.dataset())||candidate.values().size()!=schema.width()||!Organizations.BRANCHES.containsKey(candidate.organizationId()))throw new IllegalArgumentException("导入数据类型、机构或列数不正确");
         for(int i=0;i<schema.width();i++)if(schema.editable(i))schema.validateEdit(i,candidate.values().get(i));
         String fingerprint=fingerprint(candidate);boolean overwrite=replace.contains(fingerprint);BusinessRecord old=null;
         try(PreparedStatement st=statement("SELECT * FROM official_records WHERE source_fingerprint=? FOR UPDATE",fingerprint);ResultSet rs=st.executeQuery()){

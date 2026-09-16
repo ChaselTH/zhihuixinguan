@@ -47,6 +47,9 @@ public final class ImportWorkbookTest {
     var cached=reader.inspect(book("multi",wb->{wb.getSheetAt(0).getRow(2).getCell(8).setCellFormula("1+2");wb.getCreationHelper().createFormulaEvaluator().evaluateAll();}),"cached.xlsx","2026-09","","multi");check(cached.sources().get(0).record().values().get(8).equals("3"),"saved formula cache read without external evaluation");
     var formulaError=reader.inspect(book("multi",wb->{wb.getSheetAt(0).getRow(2).getCell(8).setCellFormula("1/0");wb.getCreationHelper().createFormulaEvaluator().evaluateAll();}),"error.xlsx","2026-09","","multi");check(!formulaError.errors().isEmpty()&&formulaError.errors().get(0).column().equals("I"),"formula error locates cell");
     var bounded=reader.inspect(book("multi",wb->{Sheet s=wb.getSheetAt(0);for(int i=2;i<110;i++){Row row=s.createRow(i);var v=FoundationTest.candidate("multi","WUJIN","errors"+i).values();for(int c=0;c<v.size();c++)row.createCell(c).setCellValue(v.get(c));row.getCell(1).setCellValue("unknown");}}),"bounded.xlsx","2026-09","","multi");check(bounded.errors().size()==100,"error output bound");
+    byte[] bundle=new ExcelExporter().templateBundle();try(Workbook wb=WorkbookFactory.create(new ByteArrayInputStream(bundle))){check(wb.getNumberOfSheets()==4&&wb.getSheet("模板说明")!=null,"unified template contains three data sheets and guide");for(var schema:DatasetSchema.all())check(wb.getSheet(schema.label)!=null,"unified template keeps "+schema.label);}
+    var emptyBundle=reader.inspectBundle(bundle,"bundle.xlsx","2026-09","");check(emptyBundle.errors().isEmpty()&&emptyBundle.sources().isEmpty(),"unified blank template parses without importing guide");
+    var populatedBundle=reader.inspectBundle(bundleRows(),"bundle.xlsx","2026-09","");check(populatedBundle.errors().isEmpty()&&populatedBundle.sources().size()==3,"unified workbook parses all three data sheets atomically");
     exports();System.out.println("IMPORT_WORKBOOK_OK assertions="+assertions+" synthetic templates, parser diagnostics, identifiers, cache and authorized XLSX exports");
   }
   static void exports()throws Exception{
@@ -73,6 +76,7 @@ public final class ImportWorkbookTest {
   }
   interface Edit{void run(Workbook wb)throws Exception;}
   static byte[] book(String type,Edit edit)throws Exception{try(Workbook wb=WorkbookFactory.create(new ByteArrayInputStream(HttpSmokeTest.workbook(type)))){edit.run(wb);ByteArrayOutputStream out=new ByteArrayOutputStream();wb.write(out);return out.toByteArray();}}
+  static byte[] bundleRows()throws Exception{try(Workbook wb=WorkbookFactory.create(new ByteArrayInputStream(new ExcelExporter().templateBundle()))){for(var schema:DatasetSchema.all()){Row row=wb.getSheet(schema.label).createRow(schema.headerRows);var values=FoundationTest.candidate(schema.id,"WUJIN","bundle-"+schema.id).values();for(int c=0;c<values.size();c++)row.createCell(c).setCellValue(values.get(c));}ByteArrayOutputStream out=new ByteArrayOutputStream();wb.write(out);return out.toByteArray();}}
   interface Work{void run()throws Exception;}
   static void check(boolean v,String text){assertions++;if(!v)throw new AssertionError(text);}
   static void expect(Class<? extends Throwable> type,Work work){assertions++;try{work.run();}catch(Throwable e){if(type.isInstance(e))return;throw new AssertionError("expected "+type+" got "+e,e);}throw new AssertionError("expected "+type);}

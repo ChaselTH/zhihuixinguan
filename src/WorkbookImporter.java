@@ -56,6 +56,14 @@ final class WorkbookImporter {
     }catch(WorkbookImportException e){errors.add(new Issue(filename,"",0,"",e.getMessage()));}catch(Exception e){errors.add(new Issue(filename,"",0,"","文件无法读取，请确认未加密、未损坏且格式正确"));}
     return new Report(errors.isEmpty()?result:List.of(),skipped,errors.subList(0,Math.min(errors.size(),100)));
   }
+  /** Parse one workbook against every supported data sheet; errors in any sheet reject the whole batch. */
+  Report inspectBundle(byte[] bytes,String filename,String month,String periodOverride) {
+    List<ImportPlatform.SourceRow> sources=new ArrayList<>();List<Issue> errors=new ArrayList<>();int skipped=0;
+    for(DatasetSchema schema:DatasetSchema.all()){
+      Report report=inspect(bytes,filename,month,periodOverride,schema.id);sources.addAll(report.sources());skipped+=report.skippedExamples();errors.addAll(report.errors());
+    }
+    return new Report(errors.isEmpty()?sources:List.of(),skipped,errors.subList(0,Math.min(errors.size(),100)));
+  }
   private static Issue issue(String file,Sheet sheet,int row,int col,String message){return new Issue(file,sheet.getSheetName(),row+1,col<0?"上传期次／月份":CellReference.convertNumToColString(col),message);}
   private void headerErrors(Workbook workbook,DatasetSchema schema,DataFormatter f,String filename,List<Issue> errors){
     Sheet best=null;int at=0,score=-1;

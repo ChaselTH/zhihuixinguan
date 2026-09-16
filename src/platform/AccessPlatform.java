@@ -9,7 +9,13 @@ import java.util.function.Consumer;
 public final class AccessPlatform {
   public static final String SAFETY_VERSION="safety-placeholder-v1";
   public record Application(String id,String number,String name,String organization,String state,
-      long revision,String route,String createdAt,String decidedAt,String reason,String userId) {}
+      long revision,String route,String createdAt,String decidedAt,String reason,String userId,
+      Role requestedRole) {
+    public Application(String id,String number,String name,String organization,String state,
+        long revision,String route,String createdAt,String decidedAt,String reason,String userId) {
+      this(id,number,name,organization,state,revision,route,createdAt,decidedAt,reason,userId,null);
+    }
+  }
   public record Decision(Application application,PlatformStore.CreatedUser created,boolean replayed) {}
   public record AuditFilter(String category,String organization,String dataset,String search,LocalDate from,LocalDate through) {}
   public record AuditEntry(String id,String at,String actor,String organization,String action,String recordId,
@@ -24,15 +30,20 @@ public final class AccessPlatform {
   }
   /** Public caller receives the same receipt for new, existing-account and duplicate applications. */
   public void apply(String number,String name,String organization) {
+    apply(number,name,organization,null);
+  }
+  public void apply(String number,String name,String organization,Role requestedRole) {
     String n=text(number,20),display=text(name,100);
     if(!n.matches("[0-9]{6,20}")||display.isEmpty())throw new IllegalArgumentException("请填写 6～20 位统一认证号和姓名");
     organization(organization);
+    if(requestedRole!=null)validateApplicationRole(organization,requestedRole);
     store.anonymousTransaction(()->{
       if(scalar("SELECT id FROM users WHERE auth_number=?",n)!=null||scalar("SELECT request_id FROM access_pending_numbers WHERE auth_number=?",n)!=null)return null;
       if(Integer.parseInt(scalar("SELECT COUNT(*) FROM access_pending_numbers"))>=10000)throw new IllegalArgumentException("申请队列已满，请联系管理员");
-      String route=organization.equals(Organizations.DIVISION)?"SUPER":hasBranchManager(organization)?"BRANCH":"DIVISION";
+      String route=organization.equals(Organizations.DIVISION)?"SUPER":requestedRole==Role.BRANCH_ADMIN?"DIVISION":requestedRole==Role.OPERATOR||requestedRole==Role.REVIEWER?"BRANCH":hasBranchManager(organization)?"BRANCH":"DIVISION";
+      if(requestedRole!=null&&!hasRequiredManager(requestedRole,organization))throw new IllegalStateException(requiredManagerMessage(requestedRole));
       String id=UUID.randomUUID().toString();
-      exec("INSERT INTO access_requests(id,auth_number,display_name,organization_id,state,created_at,revision,route_level) VALUES(?,?,?,?,'PENDING',?,1,?)",id,n,display,organization,now(),route);
+      exec("INSERT INTO access_requests(id,auth_number,display_name,organization_id,state,created_at,revision,route_level,requested_role) VALUES(?,?,?,?,'PENDING',?,1,?,?)",id,n,display,organization,now(),route,requestedRole==null?null:requestedRole.name());
       exec("INSERT INTO access_pending_numbers VALUES(?,?)",n,id);
       notifyManagers(load(id),"有新的权限申请","请核验申请人身份并审批；角色由管理员指定");
       checkpoint.accept("access-application-written");return null;
@@ -67,6 +78,7 @@ public final class AccessPlatform {
       if(r.revision()!=revision)throw new ConcurrentModificationException("申请已被其他管理员更新，请刷新");
       PlatformStore.CreatedUser created=null;String state,route=r.route();
       if(action.equals("APPROVE")) {
+        if(r.requestedRole()!=null&&role!=r.requestedRole())throw new SecurityException("申请目标角色已固定，请按申请角色审批");
         if(role==null||!AccessPolicy.canManage(a,role,r.organization()))throw new SecurityException("不能分配该角色");
         created=store.createUserInTransaction(a,r.number(),r.name(),role,r.organization());state="APPROVED";
         checkpoint.accept("access-account-written");
@@ -156,13 +168,32 @@ public final class AccessPlatform {
     exec("INSERT INTO access_notification_links VALUES(?,?)",event,r.id());
   }
   private boolean hasBranchManager(String org)throws SQLException {return scalar("SELECT id FROM users WHERE active=TRUE AND role='BRANCH_ADMIN' AND organization_id=? LIMIT 1",org)!=null;}
+  private boolean hasRequiredManager(Role role,String org)throws SQLException {
+    String sql=switch(role){
+      case DIVISION_ADMIN -> "SELECT id FROM users WHERE active=TRUE AND role='SUPER_ADMIN' LIMIT 1";
+      case BRANCH_ADMIN -> "SELECT id FROM users WHERE active=TRUE AND role='DIVISION_ADMIN' LIMIT 1";
+      case OPERATOR,REVIEWER -> "SELECT id FROM users WHERE active=TRUE AND role='BRANCH_ADMIN' AND organization_id=? LIMIT 1";
+      case SUPER_ADMIN -> "SELECT id FROM users WHERE active=TRUE AND role='SUPER_ADMIN' LIMIT 1";
+    };
+    return switch(role){case OPERATOR,REVIEWER->scalar(sql,org)!=null;default->scalar(sql)!=null;};
+  }
+  private static String requiredManagerMessage(Role role){return switch(role){
+    case DIVISION_ADMIN->"当前没有超级管理员，请先联系超级管理员建立分行管理员";
+    case BRANCH_ADMIN->"当前没有分行管理员，请先联系分行管理员建立支行管理员";
+    case OPERATOR,REVIEWER->"当前没有所属支行管理员，请先联系支行管理员建立后再申请";
+    case SUPER_ADMIN->"当前没有超级管理员，不能提交该申请";
+  };}
+  private static void validateApplicationRole(String org,Role role){
+    if(role==Role.SUPER_ADMIN||Organizations.DIVISION.equals(org)&&role!=Role.DIVISION_ADMIN||!Organizations.DIVISION.equals(org)&&role==Role.DIVISION_ADMIN)
+      throw new IllegalArgumentException("申请机构与目标角色不匹配");
+  }
   private void visible(ActorContext a,Application r) {
     manager(a);if(r==null||a.role()==Role.DIVISION_ADMIN&&r.organization().equals(Organizations.DIVISION)||a.role()==Role.BRANCH_ADMIN&&!a.organizationId().equals(r.organization()))throw new SecurityException("申请不存在或不在管理范围");
   }
   private static void manager(ActorContext a){if(!PlatformStore.isManager(a))throw new SecurityException("没有申请审批权限");}
   private static void organization(String org){if(!Organizations.DIVISION.equals(org)&&!Organizations.BRANCHES.containsKey(org))throw new IllegalArgumentException("请选择分行或九家支行之一");}
   private Application load(String id)throws SQLException {try(PreparedStatement st=statement("SELECT * FROM access_requests WHERE id=?",id);ResultSet rs=st.executeQuery()){return rs.next()?read(rs):null;}}
-  private static Application read(ResultSet r)throws SQLException {return new Application(r.getString("id"),r.getString("auth_number"),r.getString("display_name"),r.getString("organization_id"),r.getString("state"),r.getLong("revision"),r.getString("route_level"),r.getString("created_at"),r.getString("decided_at"),blank(r.getString("decision_reason")),r.getString("created_user_id"));}
+  private static Application read(ResultSet r)throws SQLException {String role=blank(r.getString("requested_role"));return new Application(r.getString("id"),r.getString("auth_number"),r.getString("display_name"),r.getString("organization_id"),r.getString("state"),r.getLong("revision"),r.getString("route_level"),r.getString("created_at"),r.getString("decided_at"),blank(r.getString("decision_reason")),r.getString("created_user_id"),role.isEmpty()?null:Role.valueOf(role));}
   private <T>T call(ActorContext a,PlatformStore.WorkflowWork<T> work){if(a==null||a.identityRevision()<0)throw new SecurityException("必须使用当前真实登录身份");return store.workflowTransaction(a,work);}
   private PreparedStatement statement(String sql,Object...args)throws SQLException {PreparedStatement st=db.prepareStatement(sql);for(int i=0;i<args.length;i++)st.setObject(i+1,args[i]);return st;}
   private void exec(String sql,Object...args)throws SQLException {try(PreparedStatement st=statement(sql,args)){st.executeUpdate();}}

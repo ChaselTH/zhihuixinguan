@@ -3,6 +3,8 @@ import java.net.*;
 import java.net.http.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.ss.usermodel.WorkbookFactory;
 import xinguan.platform.*;
 
 /** Actual Main routes and browser-style forms, isolated server and synthetic files. */
@@ -40,6 +42,7 @@ final class ImportHttpTest {
     String audit=get("/audit?category=business&search="+token).body();check(audit.contains("IMPORT_CONFIRM")||audit.contains("导入确认"),"confirmation decisions in shared authorized audit");
     use(branch);check(!get("/audit?category=business&search="+token).body().contains("SKIP"),"branch audit cannot see other branch import decisions");
     use(division);check(get("/foundation").body().contains("数据库结构：4"),"diagnostic page reflects actual migrated schema");
+    var unified=uploadBundle(bundleWorkbook(),"unified.xlsx",csrf());check(unified.statusCode()==200&&unified.body().contains("三表统一工作簿")&&!unified.body().contains("identity-card import-item"),"unified upload stages one compact three-sheet preview");String unifiedToken=HttpSmokeTest.hidden(unified.body()).get("token");check(unifiedToken!=null&&get("/imports/preview?token="+unifiedToken+"&details=yes").body().contains("bundle-negative"),"unified preview can expand source details on demand");check(post("/imports/confirm",Map.of("csrf",csrf(),"token",unifiedToken,"mode","saved")).statusCode()==303,"unified confirmation commits all sheets once");
     System.out.println("IMPORT_HTTP_OK assertions="+assertions+" real Main forms, bulk errors, private staging, choices, confirm, cancellation and audit");
   }
   static HttpResponse<String> upload(List<byte[]> files,List<String> names,String csrf)throws Exception{
@@ -48,6 +51,10 @@ final class ImportHttpTest {
     for(int i=0;i<files.size();i++){out.write(("--"+boundary+"\r\nContent-Disposition: form-data; name=\"files\"; filename=\""+names.get(i)+"\"\r\nContent-Type: application/octet-stream\r\n\r\n").getBytes(StandardCharsets.UTF_8));out.write(files.get(i));out.write("\r\n".getBytes(StandardCharsets.UTF_8));}
     out.write(("--"+boundary+"--\r\n").getBytes(StandardCharsets.UTF_8));return HttpSmokeTest.client.send(HttpRequest.newBuilder(URI.create(HttpSmokeTest.base+"/imports/upload/multi")).timeout(java.time.Duration.ofSeconds(30)).header("Content-Type","multipart/form-data; boundary="+boundary).POST(HttpRequest.BodyPublishers.ofByteArray(out.toByteArray())).build(),HttpResponse.BodyHandlers.ofString());
   }
+  static HttpResponse<String> uploadBundle(byte[] file,String name,String csrf)throws Exception{
+    String boundary="SyntheticBundle"+UUID.randomUUID();ByteArrayOutputStream out=new ByteArrayOutputStream();for(var e:Map.of("csrf",csrf,"month","2026-09").entrySet())out.write(("--"+boundary+"\r\nContent-Disposition: form-data; name=\""+e.getKey()+"\"\r\n\r\n"+e.getValue()+"\r\n").getBytes(StandardCharsets.UTF_8));out.write(("--"+boundary+"\r\nContent-Disposition: form-data; name=\"files\"; filename=\""+name+"\"\r\nContent-Type: application/octet-stream\r\n\r\n").getBytes(StandardCharsets.UTF_8));out.write(file);out.write(("\r\n--"+boundary+"--\r\n").getBytes(StandardCharsets.UTF_8));return HttpSmokeTest.client.send(HttpRequest.newBuilder(URI.create(HttpSmokeTest.base+"/imports/upload")).timeout(java.time.Duration.ofSeconds(30)).header("Content-Type","multipart/form-data; boundary="+boundary).POST(HttpRequest.BodyPublishers.ofByteArray(out.toByteArray())).build(),HttpResponse.BodyHandlers.ofString());
+  }
+  static byte[] bundleWorkbook()throws Exception{try(Workbook wb=WorkbookFactory.create(new ByteArrayInputStream(new ExcelExporter().templateBundle()))){for(var schema:DatasetSchema.all()){Row row=wb.getSheet(schema.label).createRow(schema.headerRows);var values=FoundationTest.candidate(schema.id,"WUJIN","bundle-"+schema.id).values();for(int c=0;c<values.size();c++)row.createCell(c).setCellValue(values.get(c));}ByteArrayOutputStream out=new ByteArrayOutputStream();wb.write(out);return out.toByteArray();}}
   static void use(HttpClient c){HttpSmokeTest.client=c;}
   static HttpResponse<String> get(String path)throws Exception{return HttpSmokeTest.get(path);}
   static HttpResponse<String> post(String path,Map<String,String> fields)throws Exception{return HttpSmokeTest.post(path,fields);}
