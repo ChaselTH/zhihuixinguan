@@ -58,6 +58,7 @@ if(args.includes('--test')){
   run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'WorkflowRoutesTest']);
   run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'xinguan.platform.ImportPlatformTest']);
   run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'ImportWorkbookTest']);
+  run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'BusinessViewTest']);
 }
 await fs.writeFile(path.join(build,'foundation-build.json'),JSON.stringify({version:(await fs.readFile(path.join(root,'VERSION'),'utf8')).trim(),sourceCommit,sourceDirty,app,jar,classpath:runtimeCp},null,2));
 console.log('BUILD_OK '+app);

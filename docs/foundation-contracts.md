@@ -1,5 +1,7 @@
 # PR0 公共基础与后续双 AI 交接约定
 
+B2 向后兼容补充（2026-09-16）：用户授权当前维护人承接 B2，`codex/v0.3-views` 从 A2 的 `37d04998c83e05695c22d00eaf79849c05bb0f4e` 切出，通过以 `codex/v0.3-import` 为 base 的依赖 PR 审查增量；先合并 A2，再改 B2 的 base 为 main 并复验。这是同一维护人接续开发的明确调整，替代下方历史双 AI 并行基线安排，不授权另一台 AI 重做。`BusinessFilter` 统一清单与授权导出的 `completion=all/complete/incomplete`；`BusinessWorkflowState` 仅通过公共服务读取私人草稿／授权提交，不把其值合并进正式行；`BusinessRoutes` 在 Main 原身份门禁后注册 `/internal` 和 `/records/history` 等路由；工作流编辑兼容增加授权 `record` 定位参数。无新迁移、公共持久化签名及身份规则变化。详见 [B2 交接说明](B2-业务展示交接.md)。
+
 A2 向后兼容补充：`PlatformStore.importing()` 提供真实 H2 持久化导入任务、逐条决定和原子确认，新增 schema 4 / V004，不改写旧迁移。HTTP 导出统一进入 `AuthorizedExportService`，保持现有月份／区间／机构／搜索语义及正式数据隔离。实际签名、异常、路由、限制和示例见 [A2 交接说明](A2-导入与导出交接.md)。A2 独立 PR 待评审，不替代 B2 的业务状态展示。后续增加完成状态筛选时必须同时更新授权导出，不复制另一套未授权查询。
 
 A1/B1 已于 PR #4/#5 合并；后文各 PR0／A1 等待接入文字仅为历史说明，当前基线与任务状态以 [协作入口](ai-collaboration/README.md) 为准。

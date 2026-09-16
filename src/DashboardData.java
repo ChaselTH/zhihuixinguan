@@ -23,8 +23,13 @@ final class DashboardData {
   }
   List<RowRef> rows(String dataset){return switch(dataset){case "multi"->multiRows;case "negative"->negativeRows;case "cross"->crossRows;default->throw new IllegalArgumentException("数据类型无效");};}
   List<RowRef> filtered(String dataset,String q,String branch){
+    return filtered(dataset,q,branch,"all");
+  }
+  List<RowRef> filtered(String dataset,String q,String branch,String completion){
+    String status=BusinessFilter.completion(completion);
     List<RowRef> result=new ArrayList<>();DatasetSchema s=DatasetSchema.get(dataset);String needle=q==null?"":q.strip().toLowerCase(Locale.ROOT);
     for(RowRef ref:rows(dataset)){if(branch!=null&&!branch.isBlank()&&!branch.equals(s.value(ref.values,s.branchColumn)))continue;
+      if(status.equals("complete")&&!s.complete(ref.values)||status.equals("incomplete")&&s.complete(ref.values))continue;
       if(needle.isEmpty()||ref.values.stream().anyMatch(v->v.toLowerCase(Locale.ROOT).contains(needle)))result.add(ref);
     }return result;
   }

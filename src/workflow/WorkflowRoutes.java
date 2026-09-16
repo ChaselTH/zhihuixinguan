@@ -113,10 +113,17 @@ final class WorkflowRoutes {
     verifyPrior(actor,prior,dataset);
     List<BusinessRecord> rows=organization.isEmpty()?List.of():new ArrayList<>(store.list(actor,dataset,from,through));
     if(!organization.isEmpty())rows.removeIf(row->!organization.equals(row.organizationId()));
+    String focus=clean(query.get("record"));
+    if(!focus.isEmpty()){
+      BusinessRecord target=store.find(actor,focus);
+      if(!target.dataset().equals(dataset)||!target.organizationId().equals(organization))throw new SecurityException("记录不属于当前填报范围");
+      rows.removeIf(row->!row.id().equals(focus));
+      if(rows.isEmpty())throw new IllegalArgumentException("记录不在当前期次范围，请返回清单刷新");
+    }
     int total=rows.size(),pagesCount=Math.max(1,(total+EDIT_PAGE_SIZE-1)/EDIT_PAGE_SIZE);
     page=Math.min(page,pagesCount);int start=(page-1)*EDIT_PAGE_SIZE;
     List<BusinessRecord> shown=rows.subList(start,Math.min(start+EDIT_PAGE_SIZE,total));
-    return pages.editor(dataset,organization,from,through,page,pagesCount,total,shown,draft,prior,notice(query));
+    return pages.editor(dataset,organization,from,through,page,pagesCount,total,shown,draft,prior,notice(query),focus);
   }
 
   private void saveDraft(HttpExchange x,WorkflowPages pages,AuthService.Session session,Map<String,String> form)throws Exception {
@@ -219,7 +226,7 @@ final class WorkflowRoutes {
 
   private static String editUrl(Map<String,String> form,String draft,String notice) {
     StringBuilder url=new StringBuilder("/workflow/edit?dataset=").append(HttpSupport.url(form.getOrDefault("dataset","multi")));
-    for(String key:List.of("organization","from","through","page"))if(!clean(form.get(key)).isEmpty())url.append('&').append(key).append('=').append(HttpSupport.url(form.get(key)));
+    for(String key:List.of("organization","from","through","page","record"))if(!clean(form.get(key)).isEmpty())url.append('&').append(key).append('=').append(HttpSupport.url(form.get(key)));
     url.append("&draft=").append(HttpSupport.url(draft)).append("&notice=").append(HttpSupport.url(notice));return url.toString();
   }
 

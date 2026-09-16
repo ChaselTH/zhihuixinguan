@@ -49,6 +49,7 @@ public final class Main extends HttpSupport {
         if(importing.get(x,session,q))return;
         if(path.equals("/export")){var result=new AuthorizedExportService(store).export(session.actor,q);sendDownload(x,result.bytes(),result.filename());return;}
         if(workflow.get(x,session,q))return;
+        if(new BusinessRoutes(store,version).get(x,session,q))return;
         if(path.equals("/security")){sendHtml(x,200,access.safety());return;}
         if(path.equals("/access/requests")){boolean only=!"yes".equals(q.get("all"));int offset=integer(q.get("offset"),0);sendHtml(x,200,access.applications(store.platform.access().applications(session.actor,only,offset,25),only,offset));return;}
         if(path.equals("/access/request")){var request=store.platform.access().application(session.actor,q.get("id"));sendHtml(x,200,access.application(request,store.platform.access().canDecide(session.actor,request)));return;}
@@ -63,11 +64,6 @@ public final class Main extends HttpSupport {
           if(path.equals("/people/edit")){sendHtml(x,200,identity.userForm(store.platform.managedUser(session.actor,q.get("id")),Map.of(),""));return;}
         }
         if(path.equals("/foundation")){if(!AccessPolicy.all(session.actor))throw new SecurityException("没有全行基础状态查看权限");sendHtml(x,200,imports.diagnostics(store.platform.schemaVersion(),store.platform.diagnostics(),store.platform.auditEvents(session.actor,100)));return;}
-        DashboardData d=dashboard(q,session.actor);RiskPages risk=new RiskPages(version,session);String type=q.getOrDefault("dataset","multi");String branch=limit(q.get("branch"),100),search=limit(q.get("q"),100);
-        if(!branch.isBlank()){String org=Organizations.resolve(branch);AccessPolicy.require(session.actor,AccessPolicy.Action.VIEW,org);branch=Organizations.label(org);}
-        if(path.equals("/")){sendHtml(x,200,risk.dashboard(d));return;}
-        if(path.equals("/branch")){sendHtml(x,200,risk.branch(d,branch));return;}
-        if(path.equals("/details")){sendHtml(x,200,risk.details(d,type,search,branch,integer(q.get("page"),1),session));return;}
       }
       if(method.equals("POST")&&path.startsWith("/imports/upload/")){importing.upload(x,session,path.substring("/imports/upload/".length()));return;}
       if(method.equals("POST")){
@@ -103,7 +99,6 @@ public final class Main extends HttpSupport {
     String org=fields.get("organization");if(org==null||org.isBlank())throw new IllegalArgumentException("请选择所属支行");return org;
   }
   private void passwordRelogin(HttpExchange x)throws IOException{auth.logout(x);x.getResponseHeaders().add("Set-Cookie",auth.clearCookie());sendHtml(x,200,new IdentityPages(version,null).login("距上次登录已超过 15 分钟，请重新登录后再打开“修改密码”。",auth.loginCsrf(x)));}
-  private DashboardData dashboard(Map<String,String> q,ActorContext a){List<String> months=store.months(a);RangeSelection r=RangeSelection.from(q,months);DashboardData d=new DashboardData(r,months,store.readAll(a),store.readRange(r,a));if(!AccessPolicy.all(a))d.branches.entrySet().removeIf(e->!e.getKey().equals(Organizations.label(a.organizationId())));return d;}
   private void login(HttpExchange x)throws IOException{requireForm(x);Map<String,String> f=decodeForm(readLimited(x.getRequestBody(),8192));if(!auth.consumeLoginCsrf(x,f.get("csrf")))throw new SecurityException("登录页面已失效，请重新打开登录页");AuthService.Session session=auth.authenticate(x.getRemoteAddress().getAddress().getHostAddress(),f.get("authNumber"),f.get("password"));if(session==null){sendHtml(x,401,new IdentityPages(version,null).login("账号或密码错误、账号停用或尝试过于频繁，请稍后重试",auth.loginCsrf(x)));return;}x.getResponseHeaders().add("Set-Cookie",auth.setCookie(session));redirect(x,session.mustChangePassword?"/account/password":"/security");}
   private void save(HttpExchange x,AuthService.Session session,Map<String,String> f)throws Exception {
     DatasetSchema schema=DatasetSchema.get(f.get("dataset"));int count=integer(f.get("rows"),-1);if(count<1||count>50)throw new IllegalArgumentException("保存记录数无效");
@@ -118,5 +113,5 @@ public final class Main extends HttpSupport {
     var preview=store.platform.workflow().previewDirect(session.actor,schema.id,changes);
     sendHtml(x,200,new WorkflowPages(version,session).preview(preview,"请核对本次修改后确认；正式数据尚未改变。"));
   }
-  private void asset(HttpExchange x,String path)throws IOException{String name=path.substring(8);if(!Set.of("style.css","foundation.css","access.css","workflow.css","import.css","html5shiv.js","identity.js").contains(name)){text(x,404,"Not found","text/plain");return;}Path file=root.resolve("web/assets").resolve(name);byte[] bytes=Files.readAllBytes(file);security(x.getResponseHeaders());x.getResponseHeaders().set("Content-Type",name.endsWith(".css")?"text/css; charset=utf-8":"application/javascript; charset=utf-8");x.sendResponseHeaders(200,bytes.length);x.getResponseBody().write(bytes);}
+  private void asset(HttpExchange x,String path)throws IOException{String name=path.substring(8);if(!Set.of("style.css","foundation.css","access.css","workflow.css","import.css","business.css","html5shiv.js","identity.js").contains(name)){text(x,404,"Not found","text/plain");return;}Path file=root.resolve("web/assets").resolve(name);byte[] bytes=Files.readAllBytes(file);security(x.getResponseHeaders());x.getResponseHeaders().set("Content-Type",name.endsWith(".css")?"text/css; charset=utf-8":"application/javascript; charset=utf-8");x.sendResponseHeaders(200,bytes.length);x.getResponseBody().write(bytes);}
 }

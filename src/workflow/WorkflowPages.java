@@ -27,6 +27,9 @@ final class WorkflowPages extends PageLayout {
   }
 
   String editor(String dataset,String organization,LocalDate from,LocalDate through,int page,int pages,int total,List<BusinessRecord> rows,Draft draft,String prior,String notice) {
+    return editor(dataset,organization,from,through,page,pages,total,rows,draft,prior,notice,"");
+  }
+  String editor(String dataset,String organization,LocalDate from,LocalDate through,int page,int pages,int total,List<BusinessRecord> rows,Draft draft,String prior,String notice,String focus) {
     DatasetSchema schema=DatasetSchema.get(dataset);boolean draftMode=session.actor.role()==Role.OPERATOR;
     Map<String,SnapshotRow> saved=new LinkedHashMap<>();if(draft!=null)for(SnapshotRow row:draft.rows())saved.put(row.before().id(),row);
     StringBuilder b=new StringBuilder(message(notice,false));
@@ -34,12 +37,13 @@ final class WorkflowPages extends PageLayout {
       .append(draftMode?"草稿正文仅本人可见；保存的是完整差异集合，切换分页不会丢失已保存修改。":"确认前只生成服务端差异；正式值尚未改变。").append("</p></div>");
     if(draft!=null)b.append("<div class=\"workflow-version\"><span>草稿版本</span><strong>").append(draft.version()).append("</strong><small>").append(saved.size()).append(" 条差异记录</small></div>");
     b.append("</div>").append(editorFilter(dataset,organization,from,through,draft,prior));
+    if(!focus.isEmpty())b.append("<p class=\"workflow-callout\">当前定位单条记录；保存仍保留草稿内其他记录。上方筛选可切回整期列表。</p>");
     if(organization.isEmpty()){b.append(empty("请选择支行后查看可编辑正式记录。"));return shell("工作流编辑","edit",b.toString());}
     if(!prior.isEmpty())b.append("<div class=\"workflow-callout warning\">本草稿将关联已退回单 <a href=\"/workflow/submission?id=").append(u(prior)).append("\">").append(e(shortId(prior))).append("</a>，重新提交会创建新单并保留旧单历史。</div>");
     b.append("<form class=\"workflow-edit-form\" method=\"post\" action=\"").append(draftMode?"/workflow/draft/save":"/workflow/direct/preview").append("\">")
       .append(hidden("csrf",session.csrf)).append(hidden("requestId",UUID.randomUUID().toString())).append(hidden("dataset",dataset)).append(hidden("organization",organization))
       .append(hidden("from",from==null?"":from.toString())).append(hidden("through",through==null?"":through.toString())).append(hidden("page",Integer.toString(page))).append(hidden("rows",Integer.toString(rows.size())))
-      .append(hidden("draftId",draft==null?"":draft.id())).append(hidden("draftVersion",draft==null?"0":Long.toString(draft.version()))).append(hidden("priorSubmissionId",prior));
+      .append(hidden("draftId",draft==null?"":draft.id())).append(hidden("draftVersion",draft==null?"0":Long.toString(draft.version()))).append(hidden("priorSubmissionId",prior)).append(hidden("record",focus));
     if(!rows.isEmpty())b.append(actionBar(draftMode));
     b.append("<div class=\"workflow-table-scroll\"><table class=\"workflow-table workflow-edit-table\"><thead><tr><th>企业／客户</th><th>客户编码</th><th>机构</th><th>来源期次</th>");
     for(DatasetSchema.Field field:schema.fields)if(field.editable())b.append("<th class=\"workflow-editable-head\">").append(e(field.title())).append("</th>");
