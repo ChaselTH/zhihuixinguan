@@ -4,7 +4,7 @@ umask 077
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 PAYLOAD_DIR="$SCRIPT_DIR/payload"
-# PR0 deliberately installs beside the stable version unless INSTALL_DIR is explicitly supplied.
+# Keep the tested PR0 installation path so upgrades retain existing users and business data.
 INSTALL_DIR="${INSTALL_DIR:-$HOME/ZhihuiXinguan-PR0}"
 STAGING_DIR=""
 BACKUP_DIR=""
@@ -111,4 +111,4 @@ section "智慧信管 V$VERSION 安装完成"
 printf '已有账号及密码保持不变。首次空库启动需本地 bootstrap.local.properties；通用包只提供空白示例。\n'
 printf '安装目录：%s\n' "$INSTALL_DIR"
 [[ -z "$BACKUP_DIR" ]] || printf '旧版和全部旧数据备份：%s（不会自动删除）\n' "$BACKUP_DIR"
-printf '\n这是公共基础测试版，默认与正式版并行安装。\n启动：cd "%s" && ./start.sh\n默认端口 2874，可在启动时另选；Ctrl+C 关闭服务。\n查看状态：./start.sh status\n' "$INSTALL_DIR"
+printf '\n这是联调测试版，默认沿用 ZhihuiXinguan-PR0 目录以保留原测试数据。\n启动：cd "%s" && ./start.sh\n默认端口 2874，可在启动时另选；Ctrl+C 关闭服务。\n查看状态：./start.sh status\n' "$INSTALL_DIR"

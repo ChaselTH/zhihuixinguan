@@ -26,10 +26,18 @@ if (-not [string]::IsNullOrWhiteSpace($BootstrapConfig)) {
     if ($privateBootstrapFile.PSIsContainer -or ($privateBootstrapFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $privateBootstrapFile.Length -gt 8192) { throw 'Bootstrap config must be a regular file of at most 8 KB' }
 }
 $runtimePath=(Resolve-Path -LiteralPath $RuntimeDir).Path
+if ((Get-Item -LiteralPath $runtimePath).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Runtime folder must not be a link' }
 $runtimeNames=@('microsoft-jdk-21.0.12-linux-aarch64.tar.gz','microsoft-jdk-21.0.12-linux-x64.tar.gz')
-foreach ($name in $runtimeNames) { if (-not (Test-Path -LiteralPath (Join-Path $runtimePath $name) -PathType Leaf)) { throw "Missing runtime: $name" } }
+# Reuse exactly the two runtime archives already delivered with PR0.7, not an arbitrary renamed binary.
+$runtimeHashes=@('c61cadbc8ad4f950131dc260f0cdfd8d4d1f200fb16f8ac6a2611f17a77ab301','f2a84ad31ebeaf3a26252dd86a4a8e1b74aefb6bfc8e55fd20190110d1353c0f')
+for ($index=0; $index -lt $runtimeNames.Count; $index++) {
+    $runtimeFile=Get-Item -LiteralPath (Join-Path $runtimePath $runtimeNames[$index])
+    if ($runtimeFile.PSIsContainer -or ($runtimeFile.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Runtime must be a regular archive' }
+    if ((Get-FileHash -LiteralPath $runtimeFile.FullName -Algorithm SHA256).Hash -ne $runtimeHashes[$index]) { throw "Runtime checksum mismatch: $($runtimeFile.Name)" }
+}
 $bundleName="zhihui-xinguan-offline-$version-kylin"
 $dist=Join-Path $projectRoot 'dist'
+if ((Test-Path -LiteralPath $dist) -and ((Get-Item -LiteralPath $dist).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Release directory must not be a link' }
 $bundle=Join-Path $dist $bundleName
 $archive=Join-Path $dist "$bundleName.tar.gz"
 if ((Test-Path -LiteralPath $bundle) -or (Test-Path -LiteralPath $archive)) { throw 'Release already exists; keep it and use a new version or a distinct release path' }
@@ -43,8 +51,8 @@ if ($privateBootstrapPath) {
     Write-Host 'PRIVATE_BUNDLE: contains local initialization credentials; never upload this bundle to GitHub or a public release.'
 }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'install.sh') -Destination $bundle
-Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\PR0-安装测试说明.md') -Destination (Join-Path $bundle '安装测试说明.md')
-Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\PR0.7-合并测试记录.md') -Destination (Join-Path $bundle '测试记录.md')
+Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\离线安装与升级.md') -Destination (Join-Path $bundle '安装测试说明.md')
+Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\发布检查.md') -Destination (Join-Path $bundle '测试记录.md')
 [IO.File]::WriteAllText((Join-Path $bundle 'SOURCE_COMMIT'),$sourceCommit+"`n",[Text.UTF8Encoding]::new($false))
 Copy-Item -LiteralPath (Join-Path $projectRoot 'THIRD_PARTY_NOTICES.md') -Destination $bundle
 $checks=@()
@@ -56,15 +64,18 @@ $archiveHash=(Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLower
 [IO.File]::WriteAllText("$archive.sha256","$archiveHash  $bundleName.tar.gz`n",[Text.UTF8Encoding]::new($false))
 if (-not [string]::IsNullOrWhiteSpace($UsbRoot)) {
     $usbPath=(Resolve-Path -LiteralPath $UsbRoot).Path
+    if ((Get-Item -LiteralPath $usbPath).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'USB destination must not be a link' }
     $driveId=([IO.Path]::GetPathRoot($usbPath)).TrimEnd('\')
     $disk=Get-CimInstance Win32_LogicalDisk | Where-Object DeviceID -eq $driveId
     if ($null -eq $disk -or $disk.DriveType -ne 2) { throw 'Requested USB target is not a removable disk' }
     $target=Join-Path $usbPath $bundleName
     if (Test-Path -LiteralPath $target) { throw 'USB release folder already exists; no existing version was overwritten' }
     $sourceFiles=@(Get-ChildItem -LiteralPath $bundle -File -Recurse)
+    if (@(Get-ChildItem -LiteralPath $bundle -Recurse -Force | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }).Count -gt 0) { throw 'Release cannot contain links' }
     $needed=($sourceFiles | Measure-Object Length -Sum).Sum
     if ($disk.FreeSpace -lt $needed+100MB) { throw 'Insufficient USB free space' }
     Copy-Item -LiteralPath $bundle -Destination $target -Recurse
+    if (@(Get-ChildItem -LiteralPath $target -File -Recurse).Count -ne $sourceFiles.Count) { throw 'USB file count mismatch' }
     foreach ($sourceFile in $sourceFiles) {
         $relative=$sourceFile.FullName.Substring($bundle.Length+1)
         $copied=Join-Path $target $relative
