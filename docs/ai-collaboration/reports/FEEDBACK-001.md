@@ -5,6 +5,7 @@
 - 负责人：另一台电脑的 AI（原 AI B）。
 - 开发分支：`codex/v0.3-feedback-001`。
 - 基线完整 SHA：`649e41e67ccd74436d2dc0e3b1d968d951195866`（`origin/main`，FEEDBACK-001 修订 1 / READY）。
+- 功能实现提交完整 SHA：`07f27c6e35d6031f8bb63a4c2207d6be379821dd`。
 - 本轮未启用 GitHub Actions，未改版本号、依赖或发布包。
 
 ## 实现清单
@@ -32,5 +33,5 @@
 
 ## 尚待审查
 
-- 尚未推送最终提交或创建 GitHub PR；完成提交后补充最终完整 SHA 和 PR 地址，等待 ChaselTH 审查，不自动合并。
+- 已推送功能分支并创建 GitHub PR：[PR #10](https://github.com/ChaselTH/zhihuixinguan/pull/10)，等待 ChaselTH 审查，不自动合并。
 - 初始密码密钥需要随数据目录备份/恢复；密钥遗失时只能重置临时密码，不能静默显示错误凭据。现代浏览器兼容检查由本地测试覆盖，旧 IE 与麒麟仍需负责人实机验收。
