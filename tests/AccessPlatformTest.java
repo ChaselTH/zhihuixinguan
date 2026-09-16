@@ -97,7 +97,7 @@ public final class AccessPlatformTest {
       }
       st.execute("INSERT INTO access_requests VALUES('old-application','880000001','虚构旧申请','WUJIN','PENDING','2026-09-01T00:00:00Z',NULL,NULL)");
     }
-    try(PlatformStore store=new PlatformStore(dir)){String password=id();store.bootstrapSuperAdmin("880000002",password);var actor=store.authenticateUser("880000002",password).actor();check(store.schemaVersion()==3,"V2 upgrades to V3");check(store.access().applications(actor,true,0,25).get(0).number().equals("880000001"),"preallocated application data preserved");store.access().apply("880000001","重复旧申请","JINTAN");check(store.access().applications(actor,true,0,25).size()==1,"V2 pending numbers backfilled");}
+    try(PlatformStore store=new PlatformStore(dir)){String password=id();store.bootstrapSuperAdmin("880000002",password);var actor=store.authenticateUser("880000002",password).actor();check(store.schemaVersion()==4,"V2 upgrades to V4");check(store.access().applications(actor,true,0,25).get(0).number().equals("880000001"),"preallocated application data preserved");store.access().apply("880000001","重复旧申请","JINTAN");check(store.access().applications(actor,true,0,25).size()==1,"V2 pending numbers backfilled");}
     Path failed=Files.createTempDirectory("xinguan-a1-failed-upgrade-");expect(java.io.IOException.class,()->{try(var ignored=new PlatformStore(failed,Clock.systemUTC(),point->{if(point.equals("migration-3-step-2"))throw new IllegalStateException("synthetic fault");})) {throw new AssertionError("fault missing");}});
     expect(java.io.IOException.class,()->{try(var ignored=new PlatformStore(failed)) {throw new AssertionError("partial migration accepted");}});
   }

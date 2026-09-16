@@ -1,0 +1,39 @@
+import java.util.*;
+import xinguan.platform.*;
+import static xinguan.platform.ImportPlatform.*;
+
+final class ImportJobPages extends PageLayout {
+  ImportJobPages(String version,AuthService.Session session){super(version,session);}
+  String history(List<Job> jobs,int offset){
+    StringBuilder b=new StringBuilder("<h1>我的导入任务</h1><p>只显示本人任务。待确认内容保存 30 分钟，重新登录或重启服务后可继续；过期需重新上传。正式导入结果长期保留。</p><p><a class=\"btn btn-primary\" href=\"/imports\">上传新批次</a></p><div class=\"table-scroll\"><table class=\"data-table\"><thead><tr><th>创建时间</th><th>表种</th><th>记录数</th><th>状态</th><th>操作</th></tr></thead><tbody>");
+    for(Job j:jobs)b.append("<tr><td>").append(e(time(j.createdAt()))).append("</td><td>").append(e(DatasetSchema.get(j.dataset()).label)).append("</td><td>").append(j.count()).append("</td><td>").append(state(j.state())).append("</td><td><a href=\"/imports/preview?token=").append(u(j.id())).append("\">查看任务</a></td></tr>");
+    if(jobs.isEmpty())b.append("<tr><td colspan=\"5\">暂无导入任务</td></tr>");
+    return shell("导入任务",b.append("</tbody></table></div>").append(AccessPages.pager("/imports/jobs?",offset,jobs.size())).toString());
+  }
+  String preview(Preview preview,int offset){
+    Job j=preview.job();DatasetSchema s=DatasetSchema.get(j.dataset());boolean active=j.state().equals("PREVIEW");
+    StringBuilder b=new StringBuilder("<h1>导入预览 · ").append(e(s.label)).append("</h1><p>任务 ").append(e(j.id())).append(" · ").append(state(j.state())).append(" · 选择版本 ").append(j.revision()).append("</p><div class=\"import-summary\">唯一来源 ").append(j.count()).append(" 条；本批相同重复折叠 ").append(j.repeated()).append(" 条；跳过示例／说明 ").append(j.examples()).append(" 条。</div>");
+    if(active)b.append("<p>尚未修改正式数据。请于 ").append(e(time(j.expiresAt()))).append(" 前确认；确认时将再次核对正式版本。其他月份、模块及本批未出现的历史记录不会删除。</p><p>默认保留已有非空填报、仅补空白。覆盖会采用上传值，空白也会清空旧值。来源不同的同客户同期记录只提示为候选，不自动合并。待复核记录若被更新，其原提交单与草稿保留，审批时会检查版本冲突。</p>");
+    b.append("<p><a href=\"/imports/jobs\">返回导入任务</a> · <a href=\"/imports\">上传其他文件</a></p>");
+    if(active){b.append("<form method=\"post\" action=\"/imports/choices\" class=\"import-controls\">").append(fields(j,offset)).append("<label>整批统一设置 <select name=\"allChoice\">").append(option("PRESERVE","保留已有填写，仅补空白","PRESERVE")).append(option("OVERWRITE","使用上传值覆盖（含清空）","PRESERVE")).append(option("SKIP","全部跳过","PRESERVE")).append("</select></label><button class=\"btn btn-light\" type=\"submit\">应用到整批</button></form>");
+      b.append("<form method=\"post\" action=\"/imports/choices\">").append(fields(j,offset)).append("<div class=\"import-controls\"><button class=\"btn btn-primary\" type=\"submit\">保存本页选择</button><span>翻页前先保存；已保存选择跨页保留。</span></div>");}
+    for(Item item:preview.items()){
+      BusinessRecord r=item.source().record(),old=item.previous();b.append("<section class=\"identity-card import-item\"><h2>").append(item.number()).append(". ").append(e(s.value(r.values(),s.customerColumn))).append("</h2><p>").append(e(Organizations.label(r.organizationId()))).append(" · ").append(e(r.period().key())).append(" · ").append(old==null?"新增来源":"与正式记录重复").append("</p><p class=\"field-note\">").append(e(r.filename())).append(" / ").append(e(item.source().sheet())).append(" / 第 ").append(item.source().row()).append(" 行</p>");
+      if(item.similar()>0)b.append("<p class=\"alert alert-error\">同客户同期有 ").append(item.similar()).append(" 条来源不同的候选。请核对来源字段；不会自动合并。</p>");
+      if(item.pending()>0)b.append("<p class=\"alert alert-error\">关联 ").append(item.pending()).append(" 份待复核提交。若本次改变正式值，原审批将因版本变化而需重新核对。</p>");
+      b.append("<p>处理选择：");if(active){b.append("<select name=\"choice_").append(item.number()).append("\">");for(Choice c:Choice.values())b.append(option(c.name(),choice(c),item.choice().name()));b.append("</select>");}else b.append(choice(item.choice()));b.append("</p>");
+      b.append("<h3>").append(old==null?"来源与填报内容":"填报差异").append("</h3><div class=\"table-scroll\"><table class=\"data-table import-diff\"><thead><tr><th>字段</th><th>系统原值</th><th>上传值</th></tr></thead><tbody>");int changes=0;
+      for(int c=0;c<s.width();c++){String before=old==null?"":old.values().get(c),after=r.values().get(c);if(old!=null&&(!s.editable(c)||before.equals(after)))continue;if(old==null&&after.isBlank())continue;changes++;b.append("<tr><td>").append(e(s.fields.get(c).title())).append(s.editable(c)?"（填报）":"（来源）").append("</td><td class=\"import-before\">").append(e(before.isBlank()?"（空白）":before)).append("</td><td class=\"import-after\">").append(e(after.isBlank()?"（空白：覆盖将清空）":after)).append("</td></tr>");}
+      if(changes==0)b.append("<tr><td colspan=\"3\">无填报差异，不改变正式行版本。</td></tr>");b.append("</tbody></table></div></section>");
+    }
+    if(active)b.append("<button class=\"btn btn-primary\" type=\"submit\">保存本页选择</button></form>");
+    b.append(AccessPages.pager("/imports/preview?token="+u(j.id()),offset,preview.items().size()));
+    if(active){b.append("<section class=\"identity-card\"><h2>确认整批导入</h2><p>按已保存的全部页面选择执行。上方未保存的选择不会提交；任何记录版本冲突或写入失败，整批都不生效。</p><form method=\"post\" action=\"/imports/confirm\">").append(fields(j,offset)).append(hidden("mode","saved")).append("<label><input type=\"checkbox\" name=\"confirmOverwrite\" value=\"yes\"> 若选择了覆盖，我确认允许上传空白清空原填报值</label><br><label><input type=\"checkbox\" name=\"confirmSimilar\" value=\"yes\"> 已核对来源不同的同客户同期候选，确认未跳过的候选按新记录新增</label><p><button class=\"btn btn-primary\" type=\"submit\">确认导入整批</button></p></form><form method=\"post\" action=\"/imports/cancel\">").append(fields(j,offset)).append("<button class=\"btn btn-light\" type=\"submit\">取消此任务</button></form></section>");}
+    return shell("导入预览",b.toString());
+  }
+  String errors(List<WorkbookImporter.Issue> errors){StringBuilder b=new StringBuilder("<h1>表格校验未通过</h1><div class=\"alert alert-error\">本批全部未导入。请按位置修正后重新上传；每个文件最多展示前 100 个错误。</div><p><a href=\"/imports\">返回上传并下载对应模板</a></p><div class=\"table-scroll\"><table class=\"data-table import-diff\"><thead><tr><th>文件</th><th>工作表</th><th>行</th><th>列</th><th>问题</th></tr></thead><tbody>");for(var i:errors)b.append("<tr><td>").append(e(i.filename())).append("</td><td>").append(e(i.sheet())).append("</td><td>").append(i.row()>0?i.row():"—").append("</td><td>").append(e(i.column())).append("</td><td>").append(e(i.message())).append("</td></tr>");return shell("导入错误",b.append("</tbody></table></div>").toString());}
+  private String fields(Job j,int offset){return hidden("csrf",currentSession.csrf)+hidden("token",j.id())+hidden("revision",Long.toString(j.revision()))+hidden("offset",Integer.toString(offset));}
+  private String shell(String title,String body){return page(title,header()+"<div class=\"page-shell import-shell\">"+body+"</div>").replace("</head>","<link rel=\"stylesheet\" href=\"/assets/import.css\"></head>");}
+  private static String choice(Choice c){return switch(c){case PRESERVE->"保留已有填写，仅补空白";case OVERWRITE->"覆盖为上传值（含清空）";case SKIP->"跳过，不修改此条";};}
+  private static String state(String s){return switch(s){case "PREVIEW"->"待确认";case "COMMITTED"->"已导入";case "CANCELLED"->"已取消";case "EXPIRED"->"已过期";default->s;};}
+}

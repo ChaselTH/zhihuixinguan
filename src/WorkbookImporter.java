@@ -9,35 +9,64 @@ import xinguan.platform.*;
 
 final class WorkbookImporter {
   record Parsed(List<BusinessRecord> rows,int skippedExamples) {}
+  record Issue(String filename,String sheet,int row,String column,String message) {}
+  record Report(List<ImportPlatform.SourceRow> sources,int skippedExamples,List<Issue> errors) {
+    Report {sources=List.copyOf(sources);errors=List.copyOf(errors);}
+  }
   Parsed read(Path path,String filename,String month,String periodOverride,String dataset)throws WorkbookImportException {
+    try{Report report=inspect(Files.readAllBytes(path),filename,month,periodOverride,dataset);if(!report.errors().isEmpty()){Issue i=report.errors().get(0);throw new WorkbookImportException(i.filename()+" / "+i.sheet()+" / 第 "+i.row()+" 行 / "+i.column()+"："+i.message());}return new Parsed(report.sources().stream().map(ImportPlatform.SourceRow::record).toList(),report.skippedExamples());}
+    catch(IOException e){throw new WorkbookImportException("文件无法读取",e);}
+  }
+  Report inspect(byte[] bytes,String filename,String month,String periodOverride,String dataset) {
     DatasetSchema schema=DatasetSchema.get(dataset);
-    if(!filename.toLowerCase(Locale.ROOT).matches(".*\\.(et|xls|xlsx)$"))throw new WorkbookImportException("仅支持 .et、.xls、.xlsx");
-    try(InputStream in=Files.newInputStream(path);Workbook workbook=WorkbookFactory.create(in)) {
+    filename=sanitize(filename);List<Issue> errors=new ArrayList<>();List<ImportPlatform.SourceRow> result=new ArrayList<>();int skipped=0;
+    if(!filename.toLowerCase(Locale.ROOT).matches(".*\\.(et|xls|xlsx)$"))return new Report(List.of(),0,List.of(new Issue(filename,"",0,"","仅支持 .et、.xls、.xlsx")));
+    try(InputStream in=new ByteArrayInputStream(bytes);Workbook workbook=WorkbookFactory.create(in)) {
       DataFormatter formatter=new DataFormatter(Locale.CHINA);Sheet selected=null;int start=0;
       for(Sheet sheet:workbook){int candidate=findHeader(sheet,schema,formatter);if(candidate>=0){if(selected!=null)throw new WorkbookImportException("文件中有多张匹配工作表，请只保留一张 "+schema.label);selected=sheet;start=candidate;}}
-      if(selected==null)throw new WorkbookImportException("与“"+schema.label+"”入口不匹配，或表头缺失／顺序错误；请下载该入口模板");
-      List<BusinessRecord> result=new ArrayList<>();int skipped=0;
-      for(int r=start+schema.headerRows;r<=selected.getLastRowNum();r++) {
-        Row row=selected.getRow(r);if(row==null)continue;List<String> values=new ArrayList<>();boolean any=false;
-        for(int c=0;c<schema.width();c++){String v=value(row.getCell(c),formatter);values.add(v);any|=!v.isBlank();}
+      if(selected==null){headerErrors(workbook,schema,formatter,filename,errors);return new Report(List.of(),0,errors);}
+      if(selected.getLastRowNum()>20020)throw new WorkbookImportException("工作表超过 20000 行，请删除尾部多余行或分批上传");
+      long characters=0;for(int r=start+schema.headerRows;r<=selected.getLastRowNum();r++) {
+        Row row=selected.getRow(r);if(row==null)continue;List<String> values=new ArrayList<>();boolean any=false;int beforeErrors=errors.size();
+        for(int c=0;c<schema.width();c++){
+          try{Cell cell=row.getCell(c);String v=value(cell,formatter);if(v.length()>10000)throw new IllegalArgumentException("单元格不能超过 10000 字");if(c==schema.codeColumn&&numeric(cell)&&Math.abs(cell.getNumericCellValue())>=1e15)throw new IllegalArgumentException("长客户编码必须使用文本，数值格式可能已丢失精度，请核对原始编码");values.add(v);any|=!v.isBlank();}
+          catch(RuntimeException e){values.add("");errors.add(issue(filename,selected,r,c,e.getMessage()));}
+        }
+        if(errors.size()!=beforeErrors){if(errors.size()>=100)break;continue;}
+        for(String v:values)characters+=v.length();if(characters>8_000_000)throw new WorkbookImportException("单元格文字合计超过 800 万字，请分批上传");
         if(!any)continue;
         if(values.get(0).contains("示例")||values.get(0).startsWith("说明")||values.get(0).startsWith("注：")||templateInstruction(schema,values)){skipped++;continue;}
+        int column=schema.customerColumn;
         try{
           if(values.get(schema.customerColumn).isBlank()&&values.get(schema.codeColumn).isBlank())throw new IllegalArgumentException("缺少客户名称和客户编码，不能识别该记录");
-          for(int c=schema.width();c<row.getLastCellNum();c++)if(!value(row.getCell(c),formatter).isBlank())throw new IllegalArgumentException("存在模板以外的非空列");
+          for(int c=schema.width();c<row.getLastCellNum();c++){column=c;if(!value(row.getCell(c),formatter).isBlank())throw new IllegalArgumentException("存在模板以外的非空列");}
+          column=schema.branchColumn;
           String org=Organizations.resolve(values.get(schema.branchColumn));values.set(schema.branchColumn,Organizations.label(org));
+          column=schema.periodColumn;
           String periodValue=schema.value(values,schema.periodColumn);if(periodValue.isBlank())periodValue=periodOverride;
           if((periodValue==null||periodValue.isBlank())&&(month==null||month.isBlank()))periodValue=filenamePeriod(filename);
           String resolvedMonth=month==null||month.isBlank()?filenameMonth(filename):month;
           xinguan.platform.Period p=xinguan.platform.Period.parse(periodValue,resolvedMonth);
           if(schema.periodColumn>=0)values.set(schema.periodColumn,p.key());
-          for(int c=0;c<schema.width();c++)if(schema.editable(c))schema.validateEdit(c,values.get(c));
-          String now=Instant.now().toString();result.add(new BusinessRecord("",0,dataset,p,org,values,sanitize(filename),now,"",Map.of()));
-        }catch(RuntimeException e){throw new WorkbookImportException("文件“"+sanitize(filename)+"” / "+selected.getSheetName()+" / 第 "+(r+1)+" 行："+e.getMessage());}
-        if(result.size()>20000)throw new WorkbookImportException("单次表格最多 20000 条，请分批导入");
+          for(int c=0;c<schema.width();c++)if(schema.editable(c)){column=c;schema.validateEdit(c,values.get(c));}
+          String now=Instant.now().toString();result.add(new ImportPlatform.SourceRow(new BusinessRecord("",0,dataset,p,org,values,filename,now,"",Map.of()),selected.getSheetName(),r+1));
+        }catch(RuntimeException e){errors.add(issue(filename,selected,r,column,e.getMessage()));}
+        if(errors.size()>=100)break;
       }
-      return new Parsed(List.copyOf(result),skipped);
-    }catch(WorkbookImportException e){throw e;}catch(Exception e){throw new WorkbookImportException("文件无法读取，请确认未加密、未损坏且格式正确",e);}
+    }catch(WorkbookImportException e){errors.add(new Issue(filename,"",0,"",e.getMessage()));}catch(Exception e){errors.add(new Issue(filename,"",0,"","文件无法读取，请确认未加密、未损坏且格式正确"));}
+    return new Report(errors.isEmpty()?result:List.of(),skipped,errors.subList(0,Math.min(errors.size(),100)));
+  }
+  private static Issue issue(String file,Sheet sheet,int row,int col,String message){return new Issue(file,sheet.getSheetName(),row+1,col<0?"上传期次／月份":CellReference.convertNumToColString(col),message);}
+  private void headerErrors(Workbook workbook,DatasetSchema schema,DataFormatter f,String filename,List<Issue> errors){
+    Sheet best=null;int at=0,score=-1;
+    for(Sheet sheet:workbook)for(int r=0;r<=Math.min(sheet.getLastRowNum(),8);r++){
+      if(!"序号".equals(value(sheet.getRow(r)==null?null:sheet.getRow(r).getCell(0),f)))continue;
+      int matches=0;for(int c=0;c<schema.width();c++)if(normal(header(sheet,r,schema.headerRows,c,f)).equals(normal(schema.fields.get(c).title())))matches++;
+      if(matches>score){score=matches;best=sheet;at=r;}
+    }
+    if(best==null){errors.add(new Issue(filename,"",0,"表头","未找到“序号”开头的表头；请使用当前入口的空白模板"));return;}
+    for(int c=0;c<schema.width();c++){String actual=header(best,at,schema.headerRows,c,f),expected=schema.fields.get(c).title();if(!normal(actual).equals(normal(expected)))errors.add(issue(filename,best,at,c,"表头缺失、重复或顺序错误。应为“"+expected+"”，实际为“"+actual+"”"));}
+    if(errors.isEmpty())errors.add(issue(filename,best,at,schema.width(),"表头存在模板以外的非空列，请核对入口和模板"));
   }
   private int findHeader(Sheet s,DatasetSchema schema,DataFormatter f) {
     for(int r=0;r<=Math.min(s.getLastRowNum(),8);r++){
@@ -63,9 +92,13 @@ final class WorkbookImporter {
     return String.join(" / ",parts);
   }
   private static String normal(String s){return s.replaceAll("[\\s　]","").replace('（','(').replace('）',')').replace('，',',');}
+  private static boolean numeric(Cell c){return c!=null&&(c.getCellType()==CellType.NUMERIC||(c.getCellType()==CellType.FORMULA&&c.getCachedFormulaResultType()==CellType.NUMERIC));}
   private static String value(Cell c,DataFormatter f){
     if(c==null||c.getCellType()==CellType.BLANK)return "";
-    if(c.getCellType()==CellType.FORMULA){return switch(c.getCachedFormulaResultType()){case STRING->c.getStringCellValue().strip();case NUMERIC->f.formatRawCellContents(c.getNumericCellValue(),c.getCellStyle().getDataFormat(),c.getCellStyle().getDataFormatString());case BOOLEAN->Boolean.toString(c.getBooleanCellValue());default->throw new IllegalArgumentException("公式没有有效缓存结果，请在表格软件中重算并保存");};}
+    if(c.getCellType()==CellType.ERROR)throw new IllegalArgumentException("单元格包含表格错误，请修正后重传");
+    if(c.getCellType()==CellType.FORMULA){
+      if(c instanceof org.apache.poi.xssf.usermodel.XSSFCell xc&&(xc.getRawValue()==null||(xc.getRawValue().isEmpty()&&c.getCachedFormulaResultType()!=CellType.STRING)))throw new IllegalArgumentException("公式没有有效缓存结果，请在表格软件中重算并保存");
+      return switch(c.getCachedFormulaResultType()){case STRING->c.getStringCellValue().strip();case NUMERIC->f.formatRawCellContents(c.getNumericCellValue(),c.getCellStyle().getDataFormat(),c.getCellStyle().getDataFormatString());case BOOLEAN->Boolean.toString(c.getBooleanCellValue());default->throw new IllegalArgumentException("公式没有有效缓存结果，请在表格软件中重算并保存");};}
     return f.formatCellValue(c).strip();
   }
   private static String filenameMonth(String name){Matcher m=Pattern.compile("(20\\d{2})[-_年]?(0[1-9]|1[0-2])").matcher(name);return m.find()?m.group(1)+"-"+m.group(2):"";}
