@@ -11,24 +11,36 @@ public final class ImportPlatform {
   public record SourceRow(BusinessRecord record,String sheet,int row) {}
   public record Item(int number,SourceRow source,BusinessRecord previous,int similar,int pending,Choice choice) {}
   public record Job(String id,String dataset,String state,long revision,String createdAt,String expiresAt,int count,int examples,int repeated,String resultId) {}
-  public record Preview(Job job,List<Item> items) {public Preview{items=List.copyOf(items);}}
+  public record Summary(int fileCount,List<String> periods,Map<String,Integer> datasetCounts,int newCount,int formalDuplicates,int fillConflicts,int similarCandidates) {
+    public Summary { periods=List.copyOf(periods);datasetCounts=Collections.unmodifiableMap(new LinkedHashMap<>(datasetCounts)); }
+  }
+  public record Preview(Job job,List<Item> items,Summary summary) {
+    public Preview(Job job,List<Item> items){this(job,items,new Summary(0,List.of(),Map.of(),0,0,0,0));}
+    public Preview {items=List.copyOf(items);}
+  }
   private final PlatformStore store;private final Connection db;private final Clock clock;private final Consumer<String> checkpoint;
   private static final java.time.format.DateTimeFormatter TIMESTAMP=new java.time.format.DateTimeFormatterBuilder().appendInstant(9).toFormatter();
   ImportPlatform(PlatformStore store,Connection db,Clock clock,Consumer<String> checkpoint){this.store=store;this.db=db;this.clock=clock;this.checkpoint=checkpoint;}
 
   public Job stage(ActorContext a,String dataset,List<SourceRow> input,int examples) {
-    return call(a,()->{
-      DatasetSchema schema=DatasetSchema.get(dataset);
+    return call(a,()->stageInternal(a,dataset,input,examples));
+  }
+  /** Stage one workbook containing all three supported data sheets as one atomic job. */
+  public Job stageBundle(ActorContext a,List<SourceRow> input,int examples) {
+    return call(a,()->stageInternal(a,"bundle",input,examples));
+  }
+  private Job stageInternal(ActorContext a,String dataset,List<SourceRow> input,int examples)throws SQLException {
+      boolean bundle="bundle".equals(dataset);if(!bundle)DatasetSchema.get(dataset);
       if(input.isEmpty()||input.size()>20000||examples<0)throw new IllegalArgumentException("一批需要 1～20000 条业务记录");
       expire();
       if(count("SELECT COUNT(*) FROM import_jobs WHERE state='PREVIEW' AND owner_id=?",a.userId())>=3||count("SELECT COUNT(*) FROM import_jobs WHERE state='PREVIEW'")>=20)throw new IllegalArgumentException("待确认导入任务过多，请先确认或取消已有任务");
       Map<String,SourceRow> unique=new LinkedHashMap<>();int repeated=0;long characters=0;
       for(var source:input){
-        var r=source.record();validate(schema,r);for(String value:r.values())characters+=value.length();if(characters>8_000_000)throw new IllegalArgumentException("本批单元格文字合计超过 800 万字，请分批上传");if(source.row()<1||source.sheet()==null||source.sheet().length()>200)throw new IllegalArgumentException("来源位置无效");
+        var r=source.record();DatasetSchema rowSchema=DatasetSchema.get(r.dataset());if(!bundle&&!dataset.equals(r.dataset()))throw new IllegalArgumentException("导入表种、机构或列数无效");validate(rowSchema,r);for(String value:r.values())characters+=value.length();if(characters>8_000_000)throw new IllegalArgumentException("本批单元格文字合计超过 800 万字，请分批上传");if(source.row()<1||source.sheet()==null||source.sheet().length()>200)throw new IllegalArgumentException("来源位置无效");
         String fp=PlatformStore.fingerprint(r);var old=unique.putIfAbsent(fp,source);
         if(old!=null){if(!old.record().values().equals(r.values()))throw new IllegalArgumentException("同批来源重复但填写不同："+location(old)+" 与 "+location(source)+"；请统一后重传，本批未写入");repeated++;}
       }
-      List<BusinessRecord> existing=store.list(a,dataset,null,null);Map<String,BusinessRecord> bySource=new HashMap<>();Map<String,Integer> similar=new HashMap<>();Set<String> ambiguous=new HashSet<>();
+      List<BusinessRecord> existing=store.list(a,bundle?null:dataset,null,null);Map<String,BusinessRecord> bySource=new HashMap<>();Map<String,Integer> similar=new HashMap<>();Set<String> ambiguous=new HashSet<>();
       for(var r:existing){String fp=PlatformStore.fingerprint(r);if(bySource.putIfAbsent(fp,r)!=null)ambiguous.add(fp);similar.merge(customerKey(r),1,Integer::sum);}
       for(var r:unique.values())similar.merge(customerKey(r.record()),1,Integer::sum);
       Map<String,Integer> pending=new HashMap<>();try(var st=statement("SELECT record_id,COUNT(*) FROM pending_submission_records GROUP BY record_id");var rs=st.executeQuery()){while(rs.next())pending.put(rs.getString(1),rs.getInt(2));}
@@ -40,10 +52,9 @@ public final class ImportPlatform {
         exec("INSERT INTO import_job_rows VALUES(?,?,?,?,?,?,?,?,?)",id,++n,encode(r),before==null?"":encode(before),source.sheet(),source.row(),candidates,before==null?0:pending.getOrDefault(before.id(),0),Choice.PRESERVE.name());
       }
       checkpoint.accept("import-stage-written");return job(a,id);
-    });
   }
   public List<Job> jobs(ActorContext a,int offset,int limit){return call(a,()->{page(offset,limit);expire();List<Job> result=new ArrayList<>();try(var st=statement("SELECT * FROM import_jobs WHERE owner_id=? ORDER BY created_at DESC,id LIMIT ? OFFSET ?",a.userId(),limit,offset);var rs=st.executeQuery()){while(rs.next())result.add(readJob(rs));}return List.copyOf(result);});}
-  public Preview preview(ActorContext a,String id,int offset,int limit){return call(a,()->{page(offset,limit);Job job=job(a,id);return new Preview(job,items(id,offset,limit));});}
+  public Preview preview(ActorContext a,String id,int offset,int limit){return call(a,()->{page(offset,limit);Job job=job(a,id);return new Preview(job,items(id,offset,limit),summary(id));});}
   public Job choices(ActorContext a,String id,long revision,Map<Integer,Choice> changes,Choice all){return call(a,()->{
     Job j=job(a,id);editable(j,revision);if(changes==null||changes.size()>30)throw new IllegalArgumentException("每页最多调整 30 条");
     if(all!=null&&!changes.isEmpty())throw new IllegalArgumentException("不能同时使用逐条和整批选择");
@@ -62,7 +73,7 @@ public final class ImportPlatform {
         return outcome(j.resultId());
       }
       editable(j,revision);
-      if(!scalar("SELECT baseline FROM import_jobs WHERE id=?",id).equals(PlatformStore.baseline(store.list(a,j.dataset(),null,null))))throw new ConcurrentModificationException("预览期间正式数据已变化，请取消本任务并重新上传核对；本次未导入");
+      if(!scalar("SELECT baseline FROM import_jobs WHERE id=?",id).equals(currentBaseline(a,j.dataset())))throw new ConcurrentModificationException("预览期间正式数据已变化，请取消本任务并重新上传核对；本次未导入");
       List<BusinessRecord> rows=new ArrayList<>();Set<String> replace=new HashSet<>();List<String> decisions=new ArrayList<>();
       for(var item:items(id,0,20000)){
         Choice choice=mode.equals("saved")?item.choice():mode.equals("overwrite")?Choice.OVERWRITE:Choice.PRESERVE;
@@ -95,11 +106,19 @@ public final class ImportPlatform {
       while(rs.next()){String old=rs.getString("previous");result.add(new Item(rs.getInt("row_number"),new SourceRow(decode(rs.getString("incoming")),rs.getString("source_sheet"),rs.getInt("source_row")),old.isEmpty()?null:decode(old),rs.getInt("similar_count"),rs.getInt("pending_count"),Choice.valueOf(rs.getString("choice"))));}
     }return List.copyOf(result);
   }
+  private Summary summary(String id)throws SQLException {
+    Set<String> files=new LinkedHashSet<>(),periods=new LinkedHashSet<>();Map<String,Integer> datasets=new LinkedHashMap<>();int added=0,duplicates=0,conflicts=0,similar=0;
+    for(Item item:items(id,0,20000)){
+      BusinessRecord incoming=item.source().record();files.add(incoming.filename());periods.add(incoming.period().key());datasets.merge(incoming.dataset(),1,Integer::sum);similar+=item.similar();if(item.previous()==null)added++;else {duplicates++;DatasetSchema schema=DatasetSchema.get(incoming.dataset());for(int c=0;c<schema.width();c++)if(schema.editable(c)&&!schema.value(item.previous().values(),c).equals(schema.value(incoming.values(),c))){conflicts++;break;}}
+    }
+    return new Summary(files.size(),new ArrayList<>(periods),datasets,added,duplicates,conflicts,similar);
+  }
   private static Job readJob(ResultSet rs)throws SQLException{return new Job(rs.getString("id"),rs.getString("dataset"),rs.getString("state"),rs.getLong("revision"),rs.getString("created_at"),rs.getString("expires_at"),rs.getInt("row_count"),rs.getInt("skipped_examples"),rs.getInt("repeated_rows"),Objects.toString(rs.getString("result_id"),""));}
   private PlatformStore.ImportOutcome outcome(String id)throws SQLException{try(var st=statement("SELECT * FROM import_batches WHERE id=?",id);var rs=st.executeQuery()){if(!rs.next())throw new IllegalStateException("导入结果缺失");return new PlatformStore.ImportOutcome(id,rs.getInt("added_count"),rs.getInt("duplicate_count"),rs.getInt("preserved_count"));}}
   private void expire()throws SQLException {String now=TIMESTAMP.format(clock.instant());exec("DELETE FROM import_job_rows WHERE job_id IN (SELECT id FROM import_jobs WHERE state='PREVIEW' AND expires_at<=?)",now);exec("UPDATE import_jobs SET state='EXPIRED' WHERE state='PREVIEW' AND expires_at<=?",now);}
   private static String location(SourceRow r){return r.record().filename()+" / "+r.sheet()+" / 第 "+r.row()+" 行";}
-  private static String customerKey(BusinessRecord r){var s=DatasetSchema.get(r.dataset());String code=s.value(r.values(),s.codeColumn).strip();return Codec.encode(List.of(r.organizationId(),r.period().key(),code.isEmpty()?"name:"+s.value(r.values(),s.customerColumn).strip():"code:"+code));}
+  private String currentBaseline(ActorContext a,String dataset)throws SQLException{return PlatformStore.baseline(store.list(a,"bundle".equals(dataset)?null:dataset,null,null));}
+  private static String customerKey(BusinessRecord r){var s=DatasetSchema.get(r.dataset());String code=s.value(r.values(),s.codeColumn).strip();return Codec.encode(List.of(r.dataset(),r.organizationId(),r.period().key(),code.isEmpty()?"name:"+s.value(r.values(),s.customerColumn).strip():"code:"+code));}
   private static void validate(DatasetSchema s,BusinessRecord r){if(!s.id.equals(r.dataset())||r.values().size()!=s.width()||!Organizations.BRANCHES.containsKey(r.organizationId())||r.period()==null||r.filename().length()>200)throw new IllegalArgumentException("导入表种、机构或列数无效");for(int c=0;c<s.width();c++){if(r.values().get(c).length()>10000)throw new IllegalArgumentException("单元格不能超过 10000 字");if(s.editable(c))s.validateEdit(c,r.values().get(c));}}
   private static String encode(BusinessRecord r){return Codec.encode(List.of(r.id(),Long.toString(r.version()),r.dataset(),r.period().key(),r.period().start().toString(),r.period().end().toString(),r.organizationId(),Codec.encode(r.values()),r.filename(),r.importedAt(),r.updatedAt()));}
   private static BusinessRecord decode(String raw){var v=Codec.decode(raw);return new BusinessRecord(v.get(0),Long.parseLong(v.get(1)),v.get(2),new Period(v.get(3),LocalDate.parse(v.get(4)),LocalDate.parse(v.get(5))),v.get(6),Codec.decode(v.get(7)),v.get(8),v.get(9),v.get(10),Map.of());}

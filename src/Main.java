@@ -34,7 +34,7 @@ public final class Main extends HttpSupport {
       AccessPages access=new AccessPages(version,session);
       if(path.equals("/access/apply")) {
         if(method.equals("GET")){sendHtml(x,200,access.apply(auth.applicationCsrf(x),query(x.getRequestURI()).get("scope")));return;}
-        if(method.equals("POST")){requireForm(x);Map<String,String> f=decodeForm(readLimited(x.getRequestBody(),8192));if(!auth.consumeApplicationCsrf(x,f.get("csrf")))throw new SecurityException("申请页面已失效，请重新打开申请页");if(!auth.allowApplication(x.getRemoteAddress().getAddress().getHostAddress())){sendHtml(x,429,access.error(429,"申请过于频繁，请十分钟后再试或联系管理员"));return;}store.platform.access().apply(f.get("number"),f.get("name"),f.get("organization"));redirect(x,"/access/received");return;}
+        if(method.equals("POST")){requireForm(x);Map<String,String> f=decodeForm(readLimited(x.getRequestBody(),8192));if(!auth.consumeApplicationCsrf(x,f.get("csrf")))throw new SecurityException("申请页面已失效，请重新打开申请页");if(!auth.allowApplication(x.getRemoteAddress().getAddress().getHostAddress())){sendHtml(x,429,access.error(429,"申请过于频繁，请十分钟后再试或联系管理员"));return;}try{String roleText=f.get("requestedRole");if(roleText==null||roleText.isBlank())throw new IllegalArgumentException("请选择拟申请角色");store.platform.access().apply(f.get("number"),f.get("name"),f.get("organization"),Role.valueOf(roleText));}catch(IllegalArgumentException|IllegalStateException e){sendHtml(x,400,access.error(400,e.getMessage()));return;}redirect(x,"/access/received");return;}
       }
       if(method.equals("GET")&&path.equals("/access/received")){sendHtml(x,200,access.receipt());return;}
       if(method.equals("GET")&&(path.equals("/admin")||path.equals("/admin/"))){redirect(x,session==null?"/login":"/");return;}
@@ -65,20 +65,22 @@ public final class Main extends HttpSupport {
         }
         if(path.equals("/foundation")){if(!AccessPolicy.all(session.actor))throw new SecurityException("没有全行基础状态查看权限");sendHtml(x,200,imports.diagnostics(store.platform.schemaVersion(),store.platform.diagnostics(),store.platform.auditEvents(session.actor,100)));return;}
       }
-      if(method.equals("POST")&&path.startsWith("/imports/upload/")){importing.upload(x,session,path.substring("/imports/upload/".length()));return;}
+      if(method.equals("POST")&&(path.equals("/imports/upload")||path.startsWith("/imports/upload/"))){importing.upload(x,session,path.equals("/imports/upload")?"bundle":path.substring("/imports/upload/".length()));return;}
       if(method.equals("POST")){
         requireForm(x);Map<String,String> f=decodeForm(readLimited(x.getRequestBody(),2*1024*1024));if(!auth.csrf(session,f.get("csrf")))throw new SecurityException("页面校验已失效，请刷新后重试");
         if(importing.post(x,session,f))return;
         if(workflow.post(x,session,f))return;
         switch(path){
           case "/security/ack" -> {auth.acknowledgeSafety(session,f.get("noticeVersion"));redirect(x,"/");return;}
-          case "/notifications/read" -> {store.platform.notifications().markRead(session.actor,f.get("id"));redirect(x,"/notifications");return;}
+          case "/notifications/read" -> {store.platform.notifications().markRead(session.actor,f.get("id"));session.unreadCount=store.platform.notifications().unreadCount(session.actor);redirect(x,"/notifications");return;}
+          case "/notifications/open" -> {var notice=store.platform.access().notice(session.actor,f.get("id"));String application=store.platform.access().noticeApplication(session.actor,notice.id());store.platform.notifications().markRead(session.actor,notice.id());session.unreadCount=store.platform.notifications().unreadCount(session.actor);if(!application.isEmpty()){redirect(x,"/access/request?id="+url(application));return;}if(!notice.submissionId().isEmpty()){store.platform.workflow().submission(session.actor,notice.submissionId());redirect(x,"/workflow/submission?id="+url(notice.submissionId()));return;}redirect(x,"/notifications");return;}
           case "/access/decision" -> {String action=f.get("action");Role role="APPROVE".equals(action)?Role.valueOf(f.getOrDefault("role","")):null;var result=store.platform.access().decide(session.actor,f.get("id"),Long.parseLong(f.get("revision")),action,role,f.get("reason"),f.get("requestId"));if(result.created()!=null)sendHtml(x,200,identity.created(result.created()));else redirect(x,"/access/request?id="+url(result.application().id()));return;}
           case "/logout" -> {auth.logout(x);x.getResponseHeaders().add("Set-Cookie",auth.clearCookie());redirect(x,"/login");return;}
           case "/account/password" -> {if(auth.passwordChangeExpired(session)){passwordRelogin(x);return;}try{if(!Objects.equals(f.get("next"),f.get("confirm")))throw new IllegalArgumentException("两次新密码输入不一致");auth.changePassword(session,f.get("next"));}catch(IllegalArgumentException e){sendHtml(x,400,identity.password(e.getMessage()));return;}x.getResponseHeaders().add("Set-Cookie",auth.clearCookie());redirect(x,"/login");return;}
           case "/people/create" -> {if(!PlatformStore.isManager(session.actor))throw new SecurityException("没有人员管理权限");try{sendHtml(x,200,identity.created(store.platform.createUser(session.actor,f.get("authNumber"),f.get("name"),Role.valueOf(f.getOrDefault("role","")),userOrganization(f))));}catch(IllegalArgumentException e){sendHtml(x,400,identity.userForm(null,f,e.getMessage()));}return;}
           case "/people/update" -> {UserAccount old=store.platform.managedUser(session.actor,f.get("id"));try{store.platform.updateUser(session.actor,old.id(),Long.parseLong(f.get("revision")),f.get("name"),Role.valueOf(f.getOrDefault("role","")),userOrganization(f),"true".equals(f.get("active")));}catch(IllegalArgumentException e){sendHtml(x,400,identity.userForm(old,f,e.getMessage()));return;}redirect(x,"/people");return;}
           case "/people/reset-password" -> {if(!"yes".equals(f.get("confirmReset")))throw new IllegalArgumentException("请先勾选重置密码确认");sendHtml(x,200,identity.created(store.platform.resetUserPassword(session.actor,f.get("id"),Long.parseLong(f.get("revision")))));return;}
+          case "/people/initial-password" -> {UserAccount user=store.platform.managedUser(session.actor,f.get("id"));sendHtml(x,200,identity.initialPassword(user,store.platform.initialPassword(session.actor,user.id())));return;}
           case "/people/disable" -> {if(!"yes".equals(f.get("confirmDisable")))throw new IllegalArgumentException("请先勾选停用确认");UserAccount old=store.platform.managedUser(session.actor,f.get("id"));store.platform.updateUser(session.actor,old.id(),Long.parseLong(f.get("revision")),old.name(),old.role(),old.organizationId(),false);redirect(x,"/people");return;}
           case "/update-batch" -> {save(x,session,f);return;}
           default -> {}
@@ -88,6 +90,7 @@ public final class Main extends HttpSupport {
     }catch(SecurityException e){sendHtml(x,403,new PageLayout(version,session).error(403,e.getMessage()));}
     catch(WorkflowContracts.WorkflowException e){int status=switch(e.code()){case NOT_FOUND->404;case INVALID_INPUT,NO_REVIEWER,OWNER_CHANGED->400;case TRANSACTION_FAILED->500;default->409;};sendHtml(x,status,new PageLayout(version,session).error(status,e.getMessage()));}
     catch(ConcurrentModificationException e){sendHtml(x,409,new PageLayout(version,session).error(409,e.getMessage()));}
+    catch(IllegalStateException e){sendHtml(x,400,new PageLayout(version,session).error(400,e.getMessage()));}
     catch(IllegalArgumentException|WorkbookImportException e){sendHtml(x,400,new PageLayout(version,session).error(400,e.getMessage()));}
     catch(RequestTooLargeException e){sendHtml(x,413,new PageLayout(version,session).error(413,"请求内容过大：普通表单最多 2 MB，上传批次最多 50 MB，请分批处理"));}
     catch(Exception e){e.printStackTrace();sendHtml(x,500,new PageLayout(version,session).error(500,"处理失败，请查看启动终端；未确认的操作不会写入"));}

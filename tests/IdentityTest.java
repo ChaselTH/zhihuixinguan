@@ -1,3 +1,4 @@
+import java.io.IOException;
 import java.nio.file.*;
 import java.sql.*;
 import java.time.*;
@@ -56,6 +57,7 @@ public final class IdentityTest {
       new AuthService(store);check(store.authenticateUser(SUPER_NUMBER,bootstrap)==null,"bootstrap never resets modified password");
       AuthService rate=new AuthService(store);for(int i=0;i<5;i++)check(rate.authenticate("synthetic-rate",SUPER_NUMBER,"wrong")==null,"wrong password rejected");check(rate.authenticate("synthetic-rate",SUPER_NUMBER,newRootPassword)==null,"temporary rate limit");
     }
+    Path keyFile=dir.resolve("platform/initial-password.key"),backupKey=dir.resolve("platform/initial-password.key.bak");byte[] keyBytes=Files.readAllBytes(keyFile);Files.deleteIfExists(keyFile);Files.deleteIfExists(backupKey);expect(IOException.class,()->{try(var ignored=new PlatformStore(dir)){throw new AssertionError("missing key accepted");}});Files.write(keyFile,keyBytes);Files.write(backupKey,keyBytes);try(PlatformStore restored=new PlatformStore(dir)){check(restored.authenticateUser(SUPER_NUMBER,newRootPassword)!=null,"same backup key restores encrypted credentials");}
     // Reproduce the previous release's flag in this isolated test database only.
     String dbUrl="jdbc:h2:file:"+dir.resolve("platform/records").toAbsolutePath().toString().replace('\\','/')+";DB_CLOSE_ON_EXIT=FALSE";
     try(Connection db=DriverManager.getConnection(dbUrl,"sa","");Statement statement=db.createStatement()){
