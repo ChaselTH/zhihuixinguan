@@ -1,6 +1,14 @@
 # A/B 开发任务入口
 
-## 最新有效授权：FEEDBACK-001 / 修订 2 / READY（修复 PR #10）
+## 最新有效状态：FEEDBACK-001 / COMPLETE（PR #10 已合并）
+
+2026-09-17：维护人复审修复提交 `dff545d96e21bb185decf7fba0e312b5bb8e9c14`，全量离线测试、安装模拟、原缺陷复现回归及真实合成旧库 V4→V5 验证通过。[PR #10](https://github.com/ChaselTH/zhihuixinguan/pull/10) 已合并至 main，合并提交 `5e451cc5ea832f02b18dad6149ccce9983a095cb`。用户授权维护人整理 `0.3.0-rc.2` U 盘测试包。
+
+- 另一台 AI 当前没有新的 READY 任务。定时检查遇到此状态应停止旧任务，不重复修订 1／2、不新增提交或自行发布。
+- 下方 READY 授权及任务文件仅保留历史，不再构成当前开发指令。新增试用反馈需维护人发布新的明确任务。
+- 不启用 GitHub CI；真实麒麟和 Win7 IE 仍由用户现场验收。
+
+## 历史授权：FEEDBACK-001 / 修订 2（已完成）
 
 2026-09-17 用户明确要求把审查问题交给另一台 AI 修复。**修订 1 已交付但未通过审查；另一台 AI 现在应执行 [修订 2 修复清单](FEEDBACK-001-R2.md)。** [PR #10](https://github.com/ChaselTH/zhihuixinguan/pull/10) 已收到 REQUEST_CHANGES，本轮不是重做原功能，也不是创建新的 PR。
 
