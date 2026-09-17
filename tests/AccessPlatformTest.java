@@ -12,6 +12,10 @@ public final class AccessPlatformTest {
     try(var f=new WorkflowPlatformTest.Fixture()) {
       var p=f.store.access();var otherManager=f.user(Role.BRANCH_ADMIN,"JINTAN");
       expect(IllegalArgumentException.class,()->p.apply("123","测试","WUJIN"));
+      int beforeNullRoleApplications=p.applications(f.root,true,0,100).size();long beforeNullRoleUnread=f.n().unreadCount(f.root);
+      expect(IllegalArgumentException.class,()->p.apply("799000001","无管理员无角色","LIYANG",(Role)null));
+      expect(IllegalArgumentException.class,()->p.apply("799000002","有管理员无角色","WUJIN",(Role)null));
+      check(p.applications(f.root,true,0,100).size()==beforeNullRoleApplications&&f.n().unreadCount(f.root)==beforeNullRoleUnread,"null target role never creates application, placeholder or notice");
       expect(IllegalArgumentException.class,()->p.apply("800000001","","WUJIN"));
       expect(IllegalArgumentException.class,()->p.apply("800000001","测试","UNKNOWN"));
       p.apply("800000001","虚构申请人 <script>测试</script>","WUJIN",Role.OPERATOR);

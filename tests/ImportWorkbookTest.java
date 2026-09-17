@@ -53,6 +53,10 @@ public final class ImportWorkbookTest {
     byte[] bundle=new ExcelExporter().templateBundle();try(Workbook wb=WorkbookFactory.create(new ByteArrayInputStream(bundle))){check(wb.getNumberOfSheets()==4&&wb.getSheet("模板说明")!=null,"unified template contains three data sheets and guide");for(var schema:DatasetSchema.all())check(wb.getSheet(schema.label)!=null,"unified template keeps "+schema.label);}
     var emptyBundle=reader.inspectBundle(bundle,"bundle.xlsx","2026-09","");check(emptyBundle.errors().isEmpty()&&emptyBundle.sources().isEmpty(),"unified blank template parses without importing guide");
     var populatedBundle=reader.inspectBundle(bundleRows(),"bundle.xlsx","2026-09","");check(populatedBundle.errors().isEmpty()&&populatedBundle.sources().size()==3,"unified workbook parses all three data sheets atomically");
+    var inferredBundle=reader.inspectBundle(bundleRows("20261001-20261015"),"2026-10-cross.xlsx","","");
+    check(inferredBundle.errors().isEmpty()&&inferredBundle.sources().stream().filter(s->s.record().dataset().equals("cross")).allMatch(s->s.record().period().key().equals("2026-10")),"cross sheet uses its file month when public month is omitted");
+    var conflictingBundle=reader.inspectBundle(bundleRows("20261001-20261015"),"2026-10-cross.xlsx","2026-09","");
+    check(!conflictingBundle.errors().isEmpty()&&conflictingBundle.sources().isEmpty()&&conflictingBundle.errors().stream().anyMatch(i->i.message().contains("公共月份与文件名月份冲突")),"public month and cross-file month conflict rejects the whole bundle");
     exports();System.out.println("IMPORT_WORKBOOK_OK assertions="+assertions+" synthetic templates, parser diagnostics, identifiers, cache and authorized XLSX exports");
   }
   static void exports()throws Exception{
@@ -79,7 +83,8 @@ public final class ImportWorkbookTest {
   }
   interface Edit{void run(Workbook wb)throws Exception;}
   static byte[] book(String type,Edit edit)throws Exception{try(Workbook wb=WorkbookFactory.create(new ByteArrayInputStream(HttpSmokeTest.workbook(type)))){edit.run(wb);ByteArrayOutputStream out=new ByteArrayOutputStream();wb.write(out);return out.toByteArray();}}
-  static byte[] bundleRows()throws Exception{try(Workbook wb=WorkbookFactory.create(new ByteArrayInputStream(new ExcelExporter().templateBundle()))){for(var schema:DatasetSchema.all()){Row row=wb.getSheet(schema.label).createRow(schema.headerRows);var values=FoundationTest.candidate(schema.id,"WUJIN","bundle-"+schema.id).values();for(int c=0;c<values.size();c++)row.createCell(c).setCellValue(values.get(c));}ByteArrayOutputStream out=new ByteArrayOutputStream();wb.write(out);return out.toByteArray();}}
+  static byte[] bundleRows()throws Exception{return bundleRows("20260901-20260915");}
+  static byte[] bundleRows(String period)throws Exception{try(Workbook wb=WorkbookFactory.create(new ByteArrayInputStream(new ExcelExporter().templateBundle()))){for(var schema:DatasetSchema.all()){Row row=wb.getSheet(schema.label).createRow(schema.headerRows);var values=FoundationTest.candidate(schema.id,"WUJIN","bundle-"+schema.id).values();for(int c=0;c<values.size();c++)row.createCell(c).setCellValue(values.get(c));if(schema.periodColumn>=0)row.getCell(schema.periodColumn).setCellValue(period);}ByteArrayOutputStream out=new ByteArrayOutputStream();wb.write(out);return out.toByteArray();}}
   interface Work{void run()throws Exception;}
   static void check(boolean v,String text){assertions++;if(!v)throw new AssertionError(text);}
   static void expect(Class<? extends Throwable> type,Work work){assertions++;try{work.run();}catch(Throwable e){if(type.isInstance(e))return;throw new AssertionError("expected "+type+" got "+e,e);}throw new AssertionError("expected "+type);}

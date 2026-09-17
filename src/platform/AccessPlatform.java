@@ -36,12 +36,13 @@ public final class AccessPlatform {
     String n=text(number,20),display=text(name,100);
     if(!n.matches("[0-9]{6,20}")||display.isEmpty())throw new IllegalArgumentException("请填写 6～20 位统一认证号和姓名");
     organization(organization);
-    if(requestedRole!=null)validateApplicationRole(organization,requestedRole);
+    if(requestedRole==null)throw new IllegalArgumentException("必须明确申请角色，不能使用旧版无角色申请入口");
+    validateApplicationRole(organization,requestedRole);
     store.anonymousTransaction(()->{
       if(scalar("SELECT id FROM users WHERE auth_number=?",n)!=null||scalar("SELECT request_id FROM access_pending_numbers WHERE auth_number=?",n)!=null)throw new IllegalArgumentException("该统一认证号已有账号或待审批申请，请联系管理员");
       if(Integer.parseInt(scalar("SELECT COUNT(*) FROM access_pending_numbers"))>=10000)throw new IllegalArgumentException("申请队列已满，请联系管理员");
       String route=organization.equals(Organizations.DIVISION)?"SUPER":requestedRole==Role.BRANCH_ADMIN?"DIVISION":requestedRole==Role.OPERATOR||requestedRole==Role.REVIEWER?"BRANCH":hasBranchManager(organization)?"BRANCH":"DIVISION";
-      if(requestedRole!=null&&!hasRequiredManager(requestedRole,organization))throw new IllegalStateException(requiredManagerMessage(requestedRole));
+      if(!hasRequiredManager(requestedRole,organization))throw new IllegalStateException(requiredManagerMessage(requestedRole));
       String id=UUID.randomUUID().toString();
       exec("INSERT INTO access_requests(id,auth_number,display_name,organization_id,state,created_at,revision,route_level,requested_role) VALUES(?,?,?,?,'PENDING',?,1,?,?)",id,n,display,organization,now(),route,requestedRole==null?null:requestedRole.name());
       exec("INSERT INTO access_pending_numbers VALUES(?,?)",n,id);
