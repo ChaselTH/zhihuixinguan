@@ -31,13 +31,14 @@ public final class ImportPlatformTest {
     expect(SecurityException.class,()->p.preview(peer,j.id(),0,25));expect(SecurityException.class,()->p.confirm(peer,j.id(),1,"saved",false,false));
     check(p.jobs(peer,0,25).isEmpty(),"other division administrator has no private staging list");
     var preview=p.preview(f.div,j.id(),0,25);check(preview.items().get(0).previous().id().equals(r.id())&&preview.items().get(0).source().row()==3,"stable id and source location captured");
+    check(preview.summary().newCount()==0&&preview.summary().formalDuplicates()==1&&preview.summary().preserveUpdated()==1&&preview.summary().overwriteUpdated()==1,"fill blank counts as one update in both modes");
     var result=p.confirm(f.div,j.id(),1,"saved",false,false);check(result.duplicates()==1&&result.added()==0&&WorkflowPlatformTest.value(f.store.find(f.op,r.id())).equals("导入填写"),"default fills existing blank");
     check(p.confirm(f.div,j.id(),1,"saved",false,false).equals(result),"repeat returns original result");
     check(f.store.find(f.op,r.id()).version()==2,"repeat does not increment version");
     expect(ConcurrentModificationException.class,()->p.confirm(f.div,j.id(),1,"overwrite",true,false));
     expect(ConcurrentModificationException.class,()->p.cancel(f.div,j.id(),2));
     expect(IllegalArgumentException.class,()->p.stage(f.div,"multi",List.of(source(r),source(withFeedback(r,"different"))),0));
-    var preserve=p.stage(f.div,"multi",List.of(source(r)),0);p.confirm(f.div,preserve.id(),1,"preserve",false,false);
+    var preserve=p.stage(f.div,"multi",List.of(source(r)),0);var summary=p.preview(f.div,preserve.id(),0,1).summary();check(summary.preserveUpdated()==0&&summary.overwriteUpdated()==1,"preserve keeps filled value, overwrite empty clears one row");p.confirm(f.div,preserve.id(),1,"preserve",false,false);
     check(WorkflowPlatformTest.value(f.store.find(f.op,r.id())).equals("导入填写")&&f.store.find(f.op,r.id()).version()==2,"preserve leaves nonempty official value and revision unchanged");
     var clear=p.stage(f.div,"multi",List.of(source(r)),0);var chosen=p.choices(f.div,clear.id(),1,Map.of(1,Choice.OVERWRITE),null);
     check(chosen.revision()==2&&p.preview(f.div,clear.id(),0,25).items().get(0).choice()==Choice.OVERWRITE,"per-row choice persists");

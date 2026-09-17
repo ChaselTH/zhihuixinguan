@@ -21,7 +21,7 @@ final class WorkbookImporter {
     DatasetSchema schema=DatasetSchema.get(dataset);
     filename=sanitize(filename);List<Issue> errors=new ArrayList<>();List<ImportPlatform.SourceRow> result=new ArrayList<>();int skipped=0;
     if(!filename.toLowerCase(Locale.ROOT).matches(".*\\.(et|xls|xlsx)$"))return new Report(List.of(),0,List.of(new Issue(filename,"",0,"","仅支持 .et、.xls、.xlsx")));
-    String contextConflict=contextConflict(month,periodOverride);if(!contextConflict.isEmpty())return new Report(List.of(),0,List.of(new Issue(filename,"",0,"上传期次／月份",contextConflict)));
+    String contextConflict=dataset.equals("cross")?"":contextConflict(month,periodOverride);if(!contextConflict.isEmpty())return new Report(List.of(),0,List.of(new Issue(filename,"",0,"上传期次／月份",contextConflict)));
     String suppliedMonth=cleanMonth(month),fileMonth=filenameMonth(filename),filePeriod=filenamePeriod(filename);
     try(InputStream in=new ByteArrayInputStream(bytes);Workbook workbook=WorkbookFactory.create(in)) {
       DataFormatter formatter=new DataFormatter(Locale.CHINA);Sheet selected=null;int start=0;
@@ -45,6 +45,11 @@ final class WorkbookImporter {
           column=schema.branchColumn;
           String org=Organizations.resolve(values.get(schema.branchColumn));values.set(schema.branchColumn,Organizations.label(org));
           column=schema.periodColumn;
+          xinguan.platform.Period p;
+          if(dataset.equals("cross")){
+            column=11;String date=firstDefaultDate(row.getCell(11),values.get(11),workbook);
+            values.set(11,date);p=xinguan.platform.Period.parse(date.substring(0,7),"");
+          }else{
           String periodValue=schema.value(values,schema.periodColumn);if(periodValue.isBlank()){
             if(periodOverride!=null&&!periodOverride.isBlank()){
               String overrideMonth=periodMonth(periodOverride);if(!overrideMonth.isEmpty()&&!fileMonth.isEmpty()&&!overrideMonth.equals(fileMonth))throw new IllegalArgumentException("补充期次与文件名月份冲突，请按文件分别补充期次或清空公共期次");
@@ -55,7 +60,8 @@ final class WorkbookImporter {
             }else if(!suppliedMonth.isEmpty()&&!fileMonth.isEmpty()&&!suppliedMonth.equals(fileMonth))throw new IllegalArgumentException("公共月份与文件名月份冲突，请按文件分别指定月份；本批未导入");
           }
           String resolvedMonth=suppliedMonth.isEmpty()?fileMonth:suppliedMonth;
-          xinguan.platform.Period p=xinguan.platform.Period.parse(periodValue,resolvedMonth);
+          p=xinguan.platform.Period.parse(periodValue,resolvedMonth);
+          }
           if(schema.periodColumn>=0)values.set(schema.periodColumn,p.key());
           for(int c=0;c<schema.width();c++)if(schema.editable(c)){column=c;schema.validateEdit(c,values.get(c));}
           String now=Instant.now().toString();result.add(new ImportPlatform.SourceRow(new BusinessRecord("",0,dataset,p,org,values,filename,now,"",Map.of()),selected.getSheetName(),r+1));
@@ -118,6 +124,23 @@ final class WorkbookImporter {
       if(c instanceof org.apache.poi.xssf.usermodel.XSSFCell xc&&(xc.getRawValue()==null||(xc.getRawValue().isEmpty()&&c.getCachedFormulaResultType()!=CellType.STRING)))throw new IllegalArgumentException("公式没有有效缓存结果，请在表格软件中重算并保存");
       return switch(c.getCachedFormulaResultType()){case STRING->c.getStringCellValue().strip();case NUMERIC->f.formatRawCellContents(c.getNumericCellValue(),c.getCellStyle().getDataFormat(),c.getCellStyle().getDataFormatString());case BOOLEAN->Boolean.toString(c.getBooleanCellValue());default->throw new IllegalArgumentException("公式没有有效缓存结果，请在表格软件中重算并保存");};}
     return f.formatCellValue(c).strip();
+  }
+  private static String firstDefaultDate(Cell cell,String value,Workbook workbook){
+    try{
+      LocalDate date;
+      if(numeric(cell)&&DateUtil.isCellDateFormatted(cell)){
+        double serial=cell.getNumericCellValue();if(!DateUtil.isValidExcelDate(serial))throw new IllegalArgumentException();
+        boolean window1904=workbook instanceof org.apache.poi.xssf.usermodel.XSSFWorkbook x?x.isDate1904():workbook instanceof org.apache.poi.hssf.usermodel.HSSFWorkbook h&&h.getInternalWorkbook().isUsing1904DateWindowing();
+        date=DateUtil.getLocalDateTime(serial,window1904).toLocalDate();
+      }else{
+        String text=value.strip();Matcher m=Pattern.compile("^(20\\d{2})[-/.年](\\d{1,2})[-/.月](\\d{1,2})(?:日)?(?:[ T]\\d{1,2}:\\d{2}(?::\\d{2})?)?$").matcher(text);
+        if(m.matches())date=LocalDate.of(Integer.parseInt(m.group(1)),Integer.parseInt(m.group(2)),Integer.parseInt(m.group(3)));
+        else if(text.matches("20\\d{6}"))date=LocalDate.parse(text,java.time.format.DateTimeFormatter.BASIC_ISO_DATE);
+        else throw new IllegalArgumentException();
+      }
+      if(date.getYear()<2000||date.getYear()>2099)throw new IllegalArgumentException();
+      return date.toString();
+    }catch(RuntimeException e){throw new IllegalArgumentException("违约首次出现时间必填且必须是有效日期，例如 2026-09-17；将按该日期所属月份归档");}
   }
   private static String filenameMonth(String name){Matcher m=Pattern.compile("(20\\d{2})[-_年]?(0[1-9]|1[0-2])").matcher(name);return m.find()?m.group(1)+"-"+m.group(2):"";}
   private static String filenamePeriod(String name){Matcher m=Pattern.compile("20\\d{2}[-.]?\\d{2}[-.]?\\d{2}\\s*[-~～至到_]\\s*20\\d{2}[-.]?\\d{2}[-.]?\\d{2}").matcher(name);return m.find()?m.group():"";}

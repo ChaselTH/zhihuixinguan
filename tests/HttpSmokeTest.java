@@ -59,7 +59,7 @@ public final class HttpSmokeTest {
       byte[] multi=workbook("multi");
       check(upload("negative",multi,csrf).statusCode()==400,"wrong upload entrance rejected");
       check(upload("multi",multi,"bad-token").statusCode()==403,"upload csrf enforced");
-      var preview=upload("multi",multi,csrf);check(preview.statusCode()==200&&preview.body().contains("尚未修改正式数据"),"preview before commit");
+      var preview=upload("multi",multi,csrf);check(preview.statusCode()==200&&preview.body().contains("本批数据对比"),"preview before commit");
       check(!get("/details?dataset=multi&month=2026-09").body().contains("虚构测试企业 HTTP"),"preview has no published data");
       String token=hidden(preview.body()).get("token");check(post("/imports/confirm",Map.of("csrf",csrf,"token",token,"mode","preserve")).statusCode()==303,"confirm import");
       String details=get("/details?dataset=multi&month=2026-09").body();check(details.contains("虚构测试企业 HTTP"),"imported row visible");
@@ -71,7 +71,7 @@ public final class HttpSmokeTest {
       String completed=get("/details?dataset=multi&month=2026-09").body();check(completed.contains("row-complete"),"row completion color");check(completed.contains("&lt;script&gt;test&lt;/script&gt;"),"saved text html escaped");
       check(!get("/?month=2026-09").body().contains("虚构测试企业 HTTP"),"completed row excluded from homepage pending list");
       check(get("/export?dataset=multi&month=2026-09").statusCode()==200,"authenticated export");
-      var again=upload("multi",multi,csrf);check(again.body().contains("填报差异"),"overwrite differences shown");
+      var again=upload("multi",multi,csrf);check(again.body().contains("填写不同 1 条")&&again.body().contains("保留模式预计更新 0 条；覆盖模式预计更新 1 条"),"overwrite differences shown");
       check(post("/imports/confirm",Map.of("csrf",csrf,"token",hidden(again.body()).get("token"),"mode","overwrite")).statusCode()==400,"blank overwrite needs explicit consent");
       check(post("/imports/confirm",Map.of("csrf",csrf,"token",hidden(again.body()).get("token"),"mode","preserve")).statusCode()==303,"preserve duplicate");
       check(get("/details?dataset=multi&month=2026-09").body().contains("HTTP 虚构反馈"),"duplicate preserved feedback");

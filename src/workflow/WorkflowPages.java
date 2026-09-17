@@ -128,7 +128,7 @@ final class WorkflowPages extends PageLayout {
     if(session.actor.role()==Role.OPERATOR)content.append(tab("/workflow/drafts","全部草稿","drafts",active));
     content.append(tab("/workflow/submissions",session.actor.role()==Role.OPERATOR?"我的提交":"提交记录","submissions",active));
     if(session.actor.role()==Role.REVIEWER)content.append(tab("/workflow/reviews","复核待办","reviews",active));
-    content.append("</div></div>").append(body).append("</div>");
+    content.append("</div></div>");if(!active.equals("home"))content.append(backButton("/workflow"));content.append(body).append("</div>");
     String html=page(title,content.toString());return html.replace("<link rel=\"stylesheet\" href=\"/assets/foundation.css\">","<link rel=\"stylesheet\" href=\"/assets/foundation.css\"><link rel=\"stylesheet\" href=\"/assets/workflow.css\">");
   }
 

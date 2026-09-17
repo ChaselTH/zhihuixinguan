@@ -31,7 +31,7 @@ public final class DatasetSchema {
     new DatasetSchema("multi","多重预警清单","risk",2,1,2,3,22,
       new String[]{"sequence","branch","customer_name","customer_code","loan_balance","credit_rating","company_size","industry","sales_2024","sales_2025","profit_2024","profit_2025","finance_2024","finance_2025","icbc_finance_2024","icbc_finance_2025","warning_detail","feedback","default_risk","control_category","control_measures","finance_strategy","period"},
       new String[]{"序号","支行","客户全称","客户编码","贷款余额（万元）","信用等级","企业规模","所属行业（大类）","2024年销售收入","2025销售收入","2024年净利润","2025年净利润","2024年融资总额","2025融资总额","2024我行融资","2025我行融资","多重预警信息","情况反馈","未来6个月内是否存在违约风险","后续管控分类（无需管控，日常一般管控，重点关注管控）","具体管控目标及措施（日常一般管控、重点管控必填）","本年度融资策略","时间顺序"},new int[]{8,9,10,11,12,13,14,15,17,18,19,20,21});
-    new DatasetSchema("cross","交叉违约清单","internal",2,3,1,2,-1,
+    new DatasetSchema("cross","交叉违约清单","risk",2,3,1,2,-1,
       new String[]{"sequence","customer_name","customer_code","branch","authorization_filed","authorization_expiry","icbc_watch","icbc_bad","other_watch","other_bad","default_bank","default_first_date","cross_feedback","default_risk","control_measures"},
       new String[]{"序号","客户全称","客户编码","支行","两书是否入库","已入库两书授权到期日","工行违约情况 / 关注","工行违约情况 / 不良","他行违约情况 / 关注","他行违约情况 / 不良","违约银行名称","违约首次出现时间","交叉违约是否满90天且金额超贷款总额20%（请列明借款人最新的总融资余额、他行违约金额、违约期数），仅我行关注的简要说明关注原因。","未来6个月是否存在违约风险","风险化解方案及管控措施"},new int[]{12,13,14});
   }

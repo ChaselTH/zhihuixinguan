@@ -55,7 +55,7 @@ public final class FoundationTest {
         Path filled=work.resolve(s.id+"-filled.xlsx");try(OutputStream out=Files.newOutputStream(filled)){wb.write(out);}
         List<BusinessRecord> result=importer.read(filled,filled.getFileName().toString(),"2026-09","",s.id).rows();check(result.size()==1,"filled template roundtrip");check(!result.get(0).complete(),"source-only template remains incomplete");
         String wrong=s.id.equals("multi")?"negative":"multi";expect(WorkbookImportException.class,()->importer.read(filled,"file.xlsx","2026-09","",wrong));
-        if(s.id.equals("cross"))expect(WorkbookImportException.class,()->importer.read(filled,"no-date.xlsx","","",s.id));
+        if(s.id.equals("cross"))check(importer.read(filled,"no-date.xlsx","","",s.id).rows().get(0).period().key().equals("2026-09"),"cross month comes from first default date");
         for(int c=0;c<s.width();c++)check(sheet.getRow(0).getCell(c).getCellStyle().getFillForegroundColor()==(s.editable(c)?IndexedColors.YELLOW.getIndex():IndexedColors.GREY_25_PERCENT.getIndex()),"template fill consistent");
       }
       if(userTemplate!=null)check(importer.read(userTemplate,userTemplate.getFileName().toString(),"2026-09","",s.id).rows().isEmpty(),"real user template has no imported examples");
@@ -115,7 +115,7 @@ public final class FoundationTest {
   }
   static BusinessRecord candidate(String dataset,String org,String key){
     DatasetSchema s=DatasetSchema.get(dataset);List<String> row=new ArrayList<>(Collections.nCopies(s.width(),""));row.set(0,key);row.set(s.customerColumn,"虚构测试企业 "+key);row.set(s.codeColumn,"00000"+key);row.set(s.branchColumn,Organizations.label(org));
-    var p=xinguan.platform.Period.parse("20260901-20260915","");if(s.periodColumn>=0)row.set(s.periodColumn,p.key());
+    var p=xinguan.platform.Period.parse("20260901-20260915","");if(s.periodColumn>=0)row.set(s.periodColumn,p.key());else row.set(11,"2026-09-01");
     return new BusinessRecord("",0,dataset,p,org,row,"synthetic.xlsx","2026-09-11T00:00:00Z","",Map.of());
   }
   static void check(boolean condition,String message){assertions++;if(!condition)throw new AssertionError(message);}

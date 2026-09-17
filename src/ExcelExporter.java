@@ -7,13 +7,34 @@ import xinguan.platform.*;
 
 final class ExcelExporter {
   byte[] export(String dataset,String title,List<RowRef> refs)throws Exception{List<List<String>> rows=new ArrayList<>();for(RowRef ref:refs)rows.add(ref.values);return workbook(dataset,rows,false);}
+  byte[] progress(DashboardData data,String selectedBranch)throws Exception{
+    try(Workbook wb=new XSSFWorkbook()){
+      Sheet sheet=wb.createSheet("填报进度");String[] titles={"机构","清单","记录总数","已完成","未完成","完成率","统计开始月份","统计结束月份"};
+      CellStyle header=wb.createCellStyle();header.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());header.setFillPattern(FillPatternType.SOLID_FOREGROUND);Font font=wb.createFont();font.setBold(true);header.setFont(font);
+      CellStyle pct=wb.createCellStyle();pct.setDataFormat(wb.createDataFormat().getFormat("0%"));
+      Row h=sheet.createRow(0);for(int i=0;i<titles.length;i++){Cell c=h.createCell(i);c.setCellValue(titles[i]);c.setCellStyle(header);sheet.setColumnWidth(i,(i==1?24:20)*256);}
+      int n=1,total=0,done=0;
+      for(var branch:data.branches.values())if(selectedBranch.isBlank()||selectedBranch.equals(branch.name))for(String type:List.of("multi","negative","cross")){
+        int count=branch.total(type),completed=branch.completed(type);total+=count;done+=completed;
+        progressRow(sheet.createRow(n++),branch.name,DatasetSchema.get(type).label,count,completed,pct,data);
+      }
+      progressRow(sheet.createRow(n),"合计","全部风险预警",total,done,pct,data);
+      sheet.createFreezePane(2,1);sheet.setAutoFilter(new CellRangeAddress(0,n-1,0,7));
+      ByteArrayOutputStream out=new ByteArrayOutputStream();wb.write(out);return out.toByteArray();
+    }
+  }
+  private void progressRow(Row row,String branch,String type,int total,int done,CellStyle pct,DashboardData data){
+    row.createCell(0).setCellValue(branch);row.createCell(1).setCellValue(type);row.createCell(2).setCellValue(total);row.createCell(3).setCellValue(done);row.createCell(4).setCellValue(total-done);
+    Cell rate=row.createCell(5);if(total==0)rate.setCellValue("—");else{rate.setCellValue((double)done/total);rate.setCellStyle(pct);}
+    row.createCell(6).setCellValue(data.range.start);row.createCell(7).setCellValue(data.range.end);
+  }
   byte[] template(String dataset)throws Exception{return workbook(dataset,List.of(),true);}
   /** Unified blank workbook containing one data sheet for each supported module. */
   byte[] templateBundle()throws Exception{
     try(Workbook wb=new XSSFWorkbook()){
       for(DatasetSchema schema:DatasetSchema.all())createDataSheet(wb,schema,List.of());
       Sheet guide=wb.createSheet("模板说明");CellStyle normal=wb.createCellStyle();normal.setWrapText(true);normal.setVerticalAlignment(VerticalAlignment.TOP);CellStyle header=wb.createCellStyle();header.cloneStyleFrom(normal);header.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());header.setFillPattern(FillPatternType.SOLID_FOREGROUND);Font font=wb.createFont();font.setBold(true);header.setFont(font);
-      String[] notes={"智慧信管三表统一模板 v1（2026-09 表头）","本工作簿包含负面闭环清单、多重预警清单、交叉违约清单三个数据工作表；请勿改动表头、列顺序及合并单元格。","黄色列是支行填报列，任意黄色格非空即为已填写；客户编码必须按文本保存以保留前导零。","上传时只选择这一个工作簿，在统一入口一次解析、预览和确认；任一工作表错误则三表整批不生效。","机构：武进、金坛、溧阳、新区、经开、天宁、钟楼、营业部、中吴。交叉违约表所属月份取上传页面或文件名，不以首次违约日代替。","下拉字段只允许模板选项；公式必须带有已保存的缓存值。此说明页不会作为业务数据导入。"};
+      String[] notes={"智慧信管三表统一模板 v1（2026-09 表头）","本工作簿包含负面闭环清单、多重预警清单、交叉违约清单三个数据工作表；请勿改动表头、列顺序及合并单元格。","黄色列是支行填报列，任意黄色格非空即为已填写；客户编码必须按文本保存以保留前导零。","上传时只选择这一个工作簿，在统一入口一次解析、预览和确认；任一工作表错误则三表整批不生效。","机构：武进、金坛、溧阳、新区、经开、天宁、钟楼、营业部、中吴。交叉违约按违约首次出现时间分月，该列必须填写有效日期。","下拉字段只允许模板选项；公式必须带有已保存的缓存值。此说明页不会作为业务数据导入。"};
       guide.setColumnWidth(0,110*256);guide.setDisplayGridlines(false);for(int i=0;i<notes.length;i++){Row row=guide.createRow(i);row.setHeightInPoints(i==0?28:46);Cell cell=row.createCell(0);cell.setCellValue(notes[i]);cell.setCellStyle(i==0?header:normal);}
       ByteArrayOutputStream out=new ByteArrayOutputStream();wb.write(out);return out.toByteArray();
     }
@@ -52,7 +73,7 @@ final class ExcelExporter {
         DataValidationHelper helper=sheet.getDataValidationHelper();DataValidation validation=helper.createValidation(helper.createExplicitListConstraint(schema.fields.get(c).options().toArray(new String[0])),new CellRangeAddressList(schema.headerRows,Math.max(max,1000),c,c));validation.setShowErrorBox(true);sheet.addValidationData(validation);
       }
       if(template){
-        Sheet guide=wb.createSheet("模板说明");String[] notes={schema.label+" · 模板 v1（2026-09 表头）","请勿改动数据工作表表头、列顺序及合并单元格。黄色列是支行填报列，任意黄色格非空即为已填写。","客户编码必须按文本保存，保留前导零。请勿将长编码存为数值后再转文本。","机构：武进、金坛、溧阳、新区、经开、天宁、钟楼、营业部、中吴。",schema.periodColumn<0?"本表没有来源期次列，请在上传页面指定所属月份或期次；首次违约时间不是数据月份。":"时间顺序按表内各行确定；缺失时使用上传页面补充期次或所属月份。","下拉字段只允许模板选项。日期期次示例：20260901-20260915。","一次可上传 1～10 个同格式文件；单文件 20 MB、整批 50 MB／20000 条。任何文件错误则整批不导入。","同一来源重复时默认保留已有非空填写、仅补空白。选择覆盖会把上传空白也覆盖为清空。","工作表公式使用已保存的缓存值，不联网计算；有错误或无有效缓存时先重算并保存。","本页是说明，不会作为业务数据导入。"};
+        Sheet guide=wb.createSheet("模板说明");String[] notes={schema.label+" · 模板 v1（2026-09 表头）","请勿改动数据工作表表头、列顺序及合并单元格。黄色列是支行填报列，任意黄色格非空即为已填写。","客户编码必须按文本保存，保留前导零。请勿将长编码存为数值后再转文本。","机构：武进、金坛、溧阳、新区、经开、天宁、钟楼、营业部、中吴。",schema.periodColumn<0?"按违约首次出现时间所属月份归档，例如 2026-09-17；不使用文件名月份。":"时间顺序按表内各行确定；缺失时尝试识别文件名期次，无法识别则需补齐表内时间。","下拉字段只允许模板选项。日期期次示例：20260901-20260915。","一次可上传 1～10 个同格式文件；单文件 20 MB、整批 50 MB／20000 条。任何文件错误则整批不导入。","同一来源重复时默认保留已有非空填写、仅补空白。选择覆盖会把上传空白也覆盖为清空。","工作表公式使用已保存的缓存值，不联网计算；有错误或无有效缓存时先重算并保存。","本页是说明，不会作为业务数据导入。"};
         guide.setColumnWidth(0,100*256);guide.setDisplayGridlines(false);for(int i=0;i<notes.length;i++){Row row=guide.createRow(i);row.setHeightInPoints(i==0?28:42);Cell cell=row.createCell(0);cell.setCellValue(notes[i]);cell.setCellStyle(i==0?header:normal);}
       }
       ByteArrayOutputStream out=new ByteArrayOutputStream();wb.write(out);return out.toByteArray();

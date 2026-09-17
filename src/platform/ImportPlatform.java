@@ -11,11 +11,11 @@ public final class ImportPlatform {
   public record SourceRow(BusinessRecord record,String sheet,int row) {}
   public record Item(int number,SourceRow source,BusinessRecord previous,int similar,int pending,Choice choice) {}
   public record Job(String id,String dataset,String state,long revision,String createdAt,String expiresAt,int count,int examples,int repeated,String resultId) {}
-  public record Summary(int fileCount,List<String> periods,Map<String,Integer> datasetCounts,int newCount,int formalDuplicates,int fillConflicts,int similarCandidates) {
+  public record Summary(int fileCount,List<String> periods,Map<String,Integer> datasetCounts,int newCount,int formalDuplicates,int fillConflicts,int similarCandidates,int preserveUpdated,int overwriteUpdated) {
     public Summary { periods=List.copyOf(periods);datasetCounts=Collections.unmodifiableMap(new LinkedHashMap<>(datasetCounts)); }
   }
   public record Preview(Job job,List<Item> items,Summary summary) {
-    public Preview(Job job,List<Item> items){this(job,items,new Summary(0,List.of(),Map.of(),0,0,0,0));}
+    public Preview(Job job,List<Item> items){this(job,items,new Summary(0,List.of(),Map.of(),0,0,0,0,0,0));}
     public Preview {items=List.copyOf(items);}
   }
   private final PlatformStore store;private final Connection db;private final Clock clock;private final Consumer<String> checkpoint;
@@ -107,11 +107,15 @@ public final class ImportPlatform {
     }return List.copyOf(result);
   }
   private Summary summary(String id)throws SQLException {
-    Set<String> files=new LinkedHashSet<>(),periods=new LinkedHashSet<>();Map<String,Integer> datasets=new LinkedHashMap<>();int added=0,duplicates=0,conflicts=0,similar=0;
+    Set<String> files=new LinkedHashSet<>(),periods=new LinkedHashSet<>();Map<String,Integer> datasets=new LinkedHashMap<>();int added=0,duplicates=0,conflicts=0,similar=0,preserveUpdated=0,overwriteUpdated=0;
     for(Item item:items(id,0,20000)){
-      BusinessRecord incoming=item.source().record();files.add(incoming.filename());periods.add(incoming.period().key());datasets.merge(incoming.dataset(),1,Integer::sum);similar+=item.similar();if(item.previous()==null)added++;else {duplicates++;DatasetSchema schema=DatasetSchema.get(incoming.dataset());for(int c=0;c<schema.width();c++)if(schema.editable(c)&&!schema.value(item.previous().values(),c).equals(schema.value(incoming.values(),c))){conflicts++;break;}}
+      BusinessRecord incoming=item.source().record();files.add(incoming.filename());periods.add(incoming.period().key());datasets.merge(incoming.dataset(),1,Integer::sum);similar+=item.similar();if(item.previous()==null)added++;else {duplicates++;DatasetSchema schema=DatasetSchema.get(incoming.dataset());for(int c=0;c<schema.width();c++)if(schema.editable(c)&&!schema.value(item.previous().values(),c).equals(schema.value(incoming.values(),c))){conflicts++;break;}
+        List<String> merged=new ArrayList<>(incoming.values());for(int c=0;c<schema.width();c++)if(schema.editable(c)&&!item.previous().values().get(c).isBlank())merged.set(c,item.previous().values().get(c));
+        if(!merged.equals(item.previous().values()))preserveUpdated++;
+        if(!incoming.values().equals(item.previous().values()))overwriteUpdated++;
+      }
     }
-    return new Summary(files.size(),new ArrayList<>(periods),datasets,added,duplicates,conflicts,similar);
+    return new Summary(files.size(),new ArrayList<>(periods),datasets,added,duplicates,conflicts,similar,preserveUpdated,overwriteUpdated);
   }
   private static Job readJob(ResultSet rs)throws SQLException{return new Job(rs.getString("id"),rs.getString("dataset"),rs.getString("state"),rs.getLong("revision"),rs.getString("created_at"),rs.getString("expires_at"),rs.getInt("row_count"),rs.getInt("skipped_examples"),rs.getInt("repeated_rows"),Objects.toString(rs.getString("result_id"),""));}
   private PlatformStore.ImportOutcome outcome(String id)throws SQLException{try(var st=statement("SELECT * FROM import_batches WHERE id=?",id);var rs=st.executeQuery()){if(!rs.next())throw new IllegalStateException("导入结果缺失");return new PlatformStore.ImportOutcome(id,rs.getInt("added_count"),rs.getInt("duplicate_count"),rs.getInt("preserved_count"));}}

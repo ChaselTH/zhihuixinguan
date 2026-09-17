@@ -16,7 +16,7 @@ final class DashboardData {
       for(int i=0;i<r.rows.size();i++){
         List<String> row=r.rows.get(i);RowRef ref=new RowRef(r,i,row);rows(r.dataset).add(ref);
         BranchStats branch=branches.get(s.value(row,s.branchColumn));
-        if(branch!=null){branch.total++;if(s.complete(row))branch.completed++;}
+        if(branch!=null){branch.total++;branch.totals.merge(r.dataset,1,Integer::sum);if(s.complete(row)){branch.completed++;branch.done.merge(r.dataset,1,Integer::sum);}}
         if(r.dataset.equals("multi"))try{loanBalance=loanBalance.add(new BigDecimal(cell(row,4).replace(",","").strip()));}catch(NumberFormatException ignored){}
       }
     }
@@ -39,5 +39,5 @@ final class DashboardData {
   String loanText(){return loanBalance.setScale(2,RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()+" 万元";}
   static boolean rowComplete(String dataset,List<String> row){return DatasetSchema.get(dataset).complete(row);}
   static String cell(List<String> row,int i){return i>=0&&i<row.size()&&row.get(i)!=null?row.get(i):"";}
-  static final class BranchStats{final String name;int total,completed;BranchStats(String n){name=n;}int percent(){return total==0?0:completed*100/total;}}
+  static final class BranchStats{final String name;final Map<String,Integer> totals=new HashMap<>(),done=new HashMap<>();int total,completed;BranchStats(String n){name=n;}int total(String type){return totals.getOrDefault(type,0);}int completed(String type){return done.getOrDefault(type,0);}int percent(String type){return total(type)==0?0:completed(type)*100/total(type);}int percent(){return total==0?0:completed*100/total;}}
 }

@@ -46,6 +46,7 @@ const runtimeCp=[jar,cp].join(path.delimiter);
 run('java',['-Dfile.encoding=UTF-8','-cp',runtimeCp,'Main','--root',app,'--write-templates',path.join(app,'templates')]);
 if(args.includes('--test')){
   run(process.execPath,[path.join(root,'tests','identity-form.test.mjs')]);
+  run(process.execPath,[path.join(root,'tests','business-interactions.test.mjs')]);
   const tests=await fs.mkdtemp(path.join(build,'tests-'));
   run('javac',['-encoding','UTF-8','--release','17','-cp',runtimeCp,'-d',tests,...await sources(path.join(root,'tests'))]);
   run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'FoundationTest',...args.includes('--user-template')?[path.join(root,'智慧信管表头示例.et')]:[]]);

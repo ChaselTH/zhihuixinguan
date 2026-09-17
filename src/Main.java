@@ -47,6 +47,7 @@ public final class Main extends HttpSupport {
       ImportPages imports=new ImportPages(version,session);
       if(method.equals("GET")){
         if(importing.get(x,session,q))return;
+        if(path.equals("/export/progress")){var result=new AuthorizedExportService(store).exportProgress(session.actor,q);sendDownload(x,result.bytes(),result.filename());return;}
         if(path.equals("/export")){var result=new AuthorizedExportService(store).export(session.actor,q);sendDownload(x,result.bytes(),result.filename());return;}
         if(workflow.get(x,session,q))return;
         if(new BusinessRoutes(store,version).get(x,session,q))return;
@@ -116,5 +117,5 @@ public final class Main extends HttpSupport {
     var preview=store.platform.workflow().previewDirect(session.actor,schema.id,changes);
     sendHtml(x,200,new WorkflowPages(version,session).preview(preview,"请核对本次修改后确认；正式数据尚未改变。"));
   }
-  private void asset(HttpExchange x,String path)throws IOException{String name=path.substring(8);if(!Set.of("style.css","foundation.css","access.css","workflow.css","import.css","business.css","html5shiv.js","identity.js").contains(name)){text(x,404,"Not found","text/plain");return;}Path file=root.resolve("web/assets").resolve(name);byte[] bytes=Files.readAllBytes(file);security(x.getResponseHeaders());x.getResponseHeaders().set("Content-Type",name.endsWith(".css")?"text/css; charset=utf-8":"application/javascript; charset=utf-8");x.sendResponseHeaders(200,bytes.length);x.getResponseBody().write(bytes);}
+  private void asset(HttpExchange x,String path)throws IOException{String name=path.substring(8);if(!Set.of("style.css","foundation.css","access.css","workflow.css","import.css","business.css","business.js","html5shiv.js","identity.js").contains(name)){text(x,404,"Not found","text/plain");return;}Path file=root.resolve("web/assets").resolve(name);byte[] bytes=Files.readAllBytes(file);security(x.getResponseHeaders());x.getResponseHeaders().set("Content-Type",name.endsWith(".css")?"text/css; charset=utf-8":"application/javascript; charset=utf-8");x.sendResponseHeaders(200,bytes.length);x.getResponseBody().write(bytes);}
 }

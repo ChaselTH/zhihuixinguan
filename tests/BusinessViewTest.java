@@ -54,7 +54,7 @@ public final class BusinessViewTest {
       var d=view(data,division);var selected=filter(division,"multi","all");String detail=pages(division).details(d,selected,1,BusinessWorkflowState.empty());check(detail.contains("business.css")&&detail.contains("col-feedback")&&!detail.contains("fetch("),"local CSS, wide feedback, HTML-only core");
       check(!detail.contains("保存资料补充 · 预览确认")&&detail.contains("跨支行清单请先筛选"),"mixed organization list does not offer invalid whole-page submission");
       var single=BusinessFilter.from(division,Map.of("dataset","multi","branch","武进"));check(pages(division).details(d,single,1,BusinessWorkflowState.empty()).contains("保存资料补充 · 预览确认"),"one branch keeps batch preview action");
-      var internal=new InternalPages("test",session(operator)).overview(view(data,operator),filter(operator,"cross","all"),BusinessWorkflowState.empty());check(internal.contains("其他行内报表 · 待配置")&&!internal.contains("dataset=negative"),"internal module does not masquerade risk schemas as unknown templates");
+      var internal=new InternalPages("test",session(operator)).overview(view(data,operator),filter(operator,"cross","all"),BusinessWorkflowState.empty());check(internal.contains("行内报表 · 待配置")&&!internal.contains("dataset=negative"),"internal module does not masquerade risk schemas as unknown templates");
       for(var actor:List.of(root,division,branch,operator,reviewer))for(String completion:List.of("all","complete","incomplete"))for(var range:List.of(Map.of("scope","year","year","2026"),Map.of("scope","quarter","year","2026","quarter","3"),Map.of("scope","custom","start","2026-07","end","2026-09"))){
         Map<String,String> query=new HashMap<>(range);query.put("completion",completion);query.put("q","B2-OWN");query.put("branch","武进");query.put("dataset","multi");
         var filter=BusinessFilter.from(actor,query);var dashboard=new DashboardData(RangeSelection.from(query,data.months(actor)),data.months(actor),List.of(),data.readRange(RangeSelection.from(query,data.months(actor)),actor));
@@ -71,7 +71,10 @@ public final class BusinessViewTest {
     var filter=BusinessFilter.from(operator,Map.of("dataset","multi","completion","incomplete","q","B2-PAGE"));var d=view(data,operator);
     String first=pages(operator).details(d,filter,1,BusinessWorkflowState.empty()),second=pages(operator).details(d,filter,2,BusinessWorkflowState.empty());
     check(first.contains("&amp;completion=incomplete&amp;page=2")&&second.contains("&amp;completion=incomplete&amp;page=1"),"completion/search preserved across pages");
-    check(first.contains("value=\"50\"")&&second.contains("value=\"3\""),"pagination sizes 50 and 3");
+    check(first.contains("name=\"rows\" value=\"20\"")&&second.contains("name=\"rows\" value=\"20\""),"default pagination size 20");
+    check(pages(operator).details(d,filter,3,BusinessWorkflowState.empty()).contains("name=\"rows\" value=\"13\""),"final page 13 rows");
+    for(int size:List.of(10,50)){var sized=BusinessFilter.from(operator,Map.of("dataset","multi","q","B2-PAGE","pageSize",""+size));check(pages(operator).details(d,sized,1,BusinessWorkflowState.empty()).contains("name=\"rows\" value=\""+size+"\""),"selected page size");}
+    expect(IllegalArgumentException.class,()->BusinessFilter.from(operator,Map.of("pageSize","99999")));
     check(new AuthorizedExportService(data).export(operator,Map.of("dataset","multi","scope","year","year","2026","q","B2-PAGE","completion","incomplete")).count()==53,"export is full matching set not current page");
   }
   static void assertExport(DataStore data,ActorContext actor,String dataset,String completion,int count,String expected)throws Exception{
