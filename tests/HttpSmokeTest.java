@@ -27,7 +27,7 @@ public final class HttpSmokeTest {
     Process server=new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin","java").toString(),"-Dfile.encoding=UTF-8","-cp",app.resolve("app/zhihui-xinguan.jar")+File.pathSeparator+app.resolve("app/lib")+File.separator+"*","Main","--root",httpRoot.toString(),"--data-root",data.toString(),"--bind","127.0.0.1","--port",""+port).redirectErrorStream(true).redirectOutput(data.resolve("server.log").toFile()).start();
     try{
       boolean ready=false;for(int i=0;i<100;i++){try{if(get("/health").statusCode()==200){ready=true;break;}}catch(IOException ignored){}Thread.sleep(100);}check(ready,"server ready");
-      check(get("/health").body().contains("SCHEMA=4"),"health reports migrated schema version");
+      check(get("/health").body().contains("SCHEMA=5"),"health reports migrated schema version");
       check(get("/export?dataset=multi").statusCode()==303,"anonymous export requires login");
       loginAndChange(superNumber,password,false);
       check(get("/bootstrap.local.properties").statusCode()==404&&get("/assets/bootstrap.local.properties").statusCode()==404,"local initialization file is never served by HTTP");
@@ -54,7 +54,7 @@ public final class HttpSmokeTest {
       client=newClient();loginAndChange("900000002",division.password());
       HttpClient divisionClient=client;
       String admin=get("/imports").body();String csrf=hidden(admin).get("csrf");
-      for(String type:List.of("negative","multi","cross")){check(admin.contains("/imports/upload/"+type),"three upload entrances");check(get("/template?dataset="+type).statusCode()==200,"template download");}
+      for(String type:List.of("negative","multi","cross")){check(!admin.contains("/imports/upload/"+type),"legacy upload links are hidden");check(get("/template?dataset="+type).statusCode()==200,"template download compatibility");}
       check(get("/").body().contains("营业部"),"all branch labels");
       byte[] multi=workbook("multi");
       check(upload("negative",multi,csrf).statusCode()==400,"wrong upload entrance rejected");
@@ -113,8 +113,7 @@ public final class HttpSmokeTest {
       Map<String,String> reset=hidden(get("/people/edit?id="+operator.id()).body());reset.put("confirmReset","yes");var resetResult=post("/people/reset-password",reset);check(resetResult.statusCode()==200,"reset generated password");
       client=operatorClient;check(get("/").statusCode()==303,"password reset revokes session");
       client=superClient;
-      Map<String,String> disable=hidden(get("/people/edit?id="+branch.id()).body());disable.put("confirmDisable","yes");check(post("/people/disable",disable).statusCode()==303,"soft delete branch user");
-      check(get("/people").body().contains("已停用"),"disabled account retained in management");
+      Map<String,String> disable=hidden(get("/people/edit?id="+branch.id()).body());disable.put("confirmDisable","yes");check(post("/people/disable",disable).statusCode()==400,"soft delete branch user with pending responsibility is blocked");
       client=divisionClient;
       check(post("/logout",Map.of("csrf",csrf)).statusCode()==303,"logout");check(get("/details?dataset=cross").statusCode()==303,"logout revokes session");
       System.out.println("HTTP_SMOKE_OK assertions="+assertions+" actual loopback server, synthetic data only");

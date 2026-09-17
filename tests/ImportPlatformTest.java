@@ -15,7 +15,7 @@ public final class ImportPlatformTest {
       permissionsAndDecisions(f);conflictsAndRollback(f);restartAndExpiry(f);migration(f);
     }
     Path failed=Files.createTempDirectory("xinguan-import-failed-migration-");
-    expect(java.io.IOException.class,()->{try(var ignored=new PlatformStore(failed,Clock.systemUTC(),p->{if(p.equals("migration-4-step-2"))throw new IllegalStateException("synthetic migration failure");})) {throw new AssertionError("missing migration fault");}});
+    expect(java.io.IOException.class,()->{try(var ignored=new PlatformStore(failed,Clock.systemUTC(),p->{if(p.equals("migration-5-step-1"))throw new IllegalStateException("synthetic migration failure");})) {throw new AssertionError("missing migration fault");}});
     expect(java.io.IOException.class,()->{try(var ignored=new PlatformStore(failed)){throw new AssertionError("partial migration accepted");}});
     System.out.println("IMPORT_PLATFORM_OK assertions="+assertions+" persistent staging, choices, identity, concurrency, rollback, expiry and V3 upgrade");
   }
@@ -62,7 +62,7 @@ public final class ImportPlatformTest {
     p.choices(f.div,paged.id(),1,Map.of(1,Choice.SKIP),null);p.choices(f.div,paged.id(),2,Map.of(31,Choice.SKIP),null);
     check(p.preview(f.div,paged.id(),0,25).items().get(0).choice()==Choice.SKIP,"later page retains previous page choice");p.cancel(f.div,paged.id(),3);
     var bundleRows=List.of(source(newRecord("negative","WUJIN","bundle-negative")),source(newRecord("multi","WUJIN","bundle-multi")),source(newRecord("cross","WUJIN","bundle-cross")));
-    var bundle=p.stageBundle(f.div,bundleRows,0);check(bundle.dataset().equals("bundle")&&bundle.count()==3,"unified staging keeps all three data sheets in one job");check(p.preview(f.div,bundle.id(),0,25).items().size()==3,"unified preview exposes all staged source rows");var bundleResult=p.confirm(f.div,bundle.id(),1,"saved",false,false);check(bundleResult.added()==3&&f.store.list(f.div,null,null,null).stream().filter(record->record.filename().equals("synthetic.xlsx")).count()>=3,"unified confirmation writes all sheets atomically");check(p.confirm(f.div,bundle.id(),1,"saved",false,false).equals(bundleResult),"unified confirmation retry is idempotent");
+    var bundle=p.stageBundle(f.div,bundleRows,0);var bundlePreview=p.preview(f.div,bundle.id(),0,25);check(bundle.dataset().equals("bundle")&&bundle.count()==3,"unified staging keeps all three data sheets in one job");check(bundlePreview.items().size()==3,"unified preview exposes all staged source rows");check(bundlePreview.summary().fileCount()==1&&bundlePreview.summary().datasetCounts().get("negative")==1&&bundlePreview.summary().datasetCounts().get("multi")==1&&bundlePreview.summary().datasetCounts().get("cross")==1&&bundlePreview.summary().newCount()==3&&bundlePreview.summary().formalDuplicates()==0,"unified summary aggregates full batch by file, period, type and formal duplicate");var bundleResult=p.confirm(f.div,bundle.id(),1,"saved",false,false);check(bundleResult.added()==3&&f.store.list(f.div,null,null,null).stream().filter(record->record.filename().equals("synthetic.xlsx")).count()>=3,"unified confirmation writes all sheets atomically");check(p.confirm(f.div,bundle.id(),1,"saved",false,false).equals(bundleResult),"unified confirmation retry is idempotent");
   }
   static void conflictsAndRollback(WorkflowPlatformTest.Fixture f)throws Exception {
     var p=f.store.importing();var r=f.record("WUJIN","cross");var pending=f.pending(f.op,r,"待审不丢失");
@@ -106,12 +106,12 @@ public final class ImportPlatformTest {
   }
   static void migration(WorkflowPlatformTest.Fixture f)throws Exception {
     int records=f.store.list(f.div,null,null,null).size(),drafts=f.store.diagnostics().get("drafts"),submissions=f.store.diagnostics().get("submissions");f.store.close();
-    // Isolated fixture stripped of V4-only tables is an exact V3 schema, with real legacy rows.
+    // Isolated fixture stripped of V4/V5-only tables is an exact V3 schema, with real legacy rows.
     try(var db=WorkflowPlatformTest.connect(f.dir);var st=db.createStatement()){
-      st.execute("DROP TABLE import_job_rows");st.execute("DROP TABLE import_jobs");st.execute("DELETE FROM schema_migrations WHERE version=4");st.execute("DELETE FROM schema_migration_attempts WHERE version=4");
+      st.execute("DROP TABLE import_job_rows");st.execute("DROP TABLE import_jobs");st.execute("DELETE FROM schema_migrations WHERE version>=4");st.execute("DELETE FROM schema_migration_attempts WHERE version>=4");
     }
-    f.open();check(f.store.schemaVersion()==4,"V3 migrates to V4");check(f.store.list(f.div,null,null,null).size()==records&&f.store.diagnostics().get("drafts")==drafts&&f.store.diagnostics().get("submissions")==submissions,"V3 official, drafts and submissions preserved");
-    check(f.store.importing().jobs(f.div,0,25).isEmpty(),"V4 starts empty staging");
+    f.open();check(f.store.schemaVersion()==5,"V3 migrates to V5");check(f.store.list(f.div,null,null,null).size()==records&&f.store.diagnostics().get("drafts")==drafts&&f.store.diagnostics().get("submissions")==submissions,"V3 official, drafts and submissions preserved");
+    check(f.store.importing().jobs(f.div,0,25).isEmpty(),"V5 starts empty staging");
   }
   static SourceRow source(BusinessRecord r){return new SourceRow(r,"虚构子表",3);}
   static BusinessRecord withFeedback(BusinessRecord r,String text){var s=DatasetSchema.get(r.dataset());List<String> v=new ArrayList<>(r.values());v.set(s.index(r.dataset().equals("cross")?"cross_feedback":"feedback"),text);return new BusinessRecord("",0,r.dataset(),r.period(),r.organizationId(),v,"synthetic.xlsx",r.importedAt(),"",Map.of());}

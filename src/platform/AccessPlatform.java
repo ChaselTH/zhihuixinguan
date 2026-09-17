@@ -28,9 +28,9 @@ public final class AccessPlatform {
   AccessPlatform(PlatformStore store,Connection db,WorkflowEngine notices,Clock clock,Consumer<String> checkpoint) {
     this.store=store;this.db=db;this.notices=notices;this.clock=clock;this.checkpoint=checkpoint;
   }
-  /** Public caller receives the same receipt for new, existing-account and duplicate applications. */
+  /** New applications must always state their target role; legacy rows are read/approved separately. */
   public void apply(String number,String name,String organization) {
-    apply(number,name,organization,null);
+    throw new IllegalArgumentException("必须明确申请角色，不能使用旧版无角色申请入口");
   }
   public void apply(String number,String name,String organization,Role requestedRole) {
     String n=text(number,20),display=text(name,100);
@@ -38,7 +38,7 @@ public final class AccessPlatform {
     organization(organization);
     if(requestedRole!=null)validateApplicationRole(organization,requestedRole);
     store.anonymousTransaction(()->{
-      if(scalar("SELECT id FROM users WHERE auth_number=?",n)!=null||scalar("SELECT request_id FROM access_pending_numbers WHERE auth_number=?",n)!=null)return null;
+      if(scalar("SELECT id FROM users WHERE auth_number=?",n)!=null||scalar("SELECT request_id FROM access_pending_numbers WHERE auth_number=?",n)!=null)throw new IllegalArgumentException("该统一认证号已有账号或待审批申请，请联系管理员");
       if(Integer.parseInt(scalar("SELECT COUNT(*) FROM access_pending_numbers"))>=10000)throw new IllegalArgumentException("申请队列已满，请联系管理员");
       String route=organization.equals(Organizations.DIVISION)?"SUPER":requestedRole==Role.BRANCH_ADMIN?"DIVISION":requestedRole==Role.OPERATOR||requestedRole==Role.REVIEWER?"BRANCH":hasBranchManager(organization)?"BRANCH":"DIVISION";
       if(requestedRole!=null&&!hasRequiredManager(requestedRole,organization))throw new IllegalStateException(requiredManagerMessage(requestedRole));
@@ -80,7 +80,7 @@ public final class AccessPlatform {
       if(action.equals("APPROVE")) {
         if(r.requestedRole()!=null&&role!=r.requestedRole())throw new SecurityException("申请目标角色已固定，请按申请角色审批");
         if(role==null||!AccessPolicy.canManage(a,role,r.organization()))throw new SecurityException("不能分配该角色");
-        created=store.createUserInTransaction(a,r.number(),r.name(),role,r.organization());state="APPROVED";
+        created=store.createUserInTransaction(a,r.number(),r.name(),role,r.organization(),r.id());state="APPROVED";
         checkpoint.accept("access-account-written");
       } else {
         if(why.isEmpty())throw new IllegalArgumentException("请填写退回或转交原因");

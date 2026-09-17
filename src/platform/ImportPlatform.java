@@ -11,7 +11,13 @@ public final class ImportPlatform {
   public record SourceRow(BusinessRecord record,String sheet,int row) {}
   public record Item(int number,SourceRow source,BusinessRecord previous,int similar,int pending,Choice choice) {}
   public record Job(String id,String dataset,String state,long revision,String createdAt,String expiresAt,int count,int examples,int repeated,String resultId) {}
-  public record Preview(Job job,List<Item> items) {public Preview{items=List.copyOf(items);}}
+  public record Summary(int fileCount,List<String> periods,Map<String,Integer> datasetCounts,int newCount,int formalDuplicates,int fillConflicts,int similarCandidates) {
+    public Summary { periods=List.copyOf(periods);datasetCounts=Collections.unmodifiableMap(new LinkedHashMap<>(datasetCounts)); }
+  }
+  public record Preview(Job job,List<Item> items,Summary summary) {
+    public Preview(Job job,List<Item> items){this(job,items,new Summary(0,List.of(),Map.of(),0,0,0,0));}
+    public Preview {items=List.copyOf(items);}
+  }
   private final PlatformStore store;private final Connection db;private final Clock clock;private final Consumer<String> checkpoint;
   private static final java.time.format.DateTimeFormatter TIMESTAMP=new java.time.format.DateTimeFormatterBuilder().appendInstant(9).toFormatter();
   ImportPlatform(PlatformStore store,Connection db,Clock clock,Consumer<String> checkpoint){this.store=store;this.db=db;this.clock=clock;this.checkpoint=checkpoint;}
@@ -48,7 +54,7 @@ public final class ImportPlatform {
       checkpoint.accept("import-stage-written");return job(a,id);
   }
   public List<Job> jobs(ActorContext a,int offset,int limit){return call(a,()->{page(offset,limit);expire();List<Job> result=new ArrayList<>();try(var st=statement("SELECT * FROM import_jobs WHERE owner_id=? ORDER BY created_at DESC,id LIMIT ? OFFSET ?",a.userId(),limit,offset);var rs=st.executeQuery()){while(rs.next())result.add(readJob(rs));}return List.copyOf(result);});}
-  public Preview preview(ActorContext a,String id,int offset,int limit){return call(a,()->{page(offset,limit);Job job=job(a,id);return new Preview(job,items(id,offset,limit));});}
+  public Preview preview(ActorContext a,String id,int offset,int limit){return call(a,()->{page(offset,limit);Job job=job(a,id);return new Preview(job,items(id,offset,limit),summary(id));});}
   public Job choices(ActorContext a,String id,long revision,Map<Integer,Choice> changes,Choice all){return call(a,()->{
     Job j=job(a,id);editable(j,revision);if(changes==null||changes.size()>30)throw new IllegalArgumentException("每页最多调整 30 条");
     if(all!=null&&!changes.isEmpty())throw new IllegalArgumentException("不能同时使用逐条和整批选择");
@@ -99,6 +105,13 @@ public final class ImportPlatform {
     List<Item> result=new ArrayList<>();try(var st=statement("SELECT * FROM import_job_rows WHERE job_id=? ORDER BY row_number LIMIT ? OFFSET ?",id,limit,offset);var rs=st.executeQuery()){
       while(rs.next()){String old=rs.getString("previous");result.add(new Item(rs.getInt("row_number"),new SourceRow(decode(rs.getString("incoming")),rs.getString("source_sheet"),rs.getInt("source_row")),old.isEmpty()?null:decode(old),rs.getInt("similar_count"),rs.getInt("pending_count"),Choice.valueOf(rs.getString("choice"))));}
     }return List.copyOf(result);
+  }
+  private Summary summary(String id)throws SQLException {
+    Set<String> files=new LinkedHashSet<>(),periods=new LinkedHashSet<>();Map<String,Integer> datasets=new LinkedHashMap<>();int added=0,duplicates=0,conflicts=0,similar=0;
+    for(Item item:items(id,0,20000)){
+      BusinessRecord incoming=item.source().record();files.add(incoming.filename());periods.add(incoming.period().key());datasets.merge(incoming.dataset(),1,Integer::sum);similar+=item.similar();if(item.previous()==null)added++;else {duplicates++;DatasetSchema schema=DatasetSchema.get(incoming.dataset());for(int c=0;c<schema.width();c++)if(schema.editable(c)&&!schema.value(item.previous().values(),c).equals(schema.value(incoming.values(),c))){conflicts++;break;}}
+    }
+    return new Summary(files.size(),new ArrayList<>(periods),datasets,added,duplicates,conflicts,similar);
   }
   private static Job readJob(ResultSet rs)throws SQLException{return new Job(rs.getString("id"),rs.getString("dataset"),rs.getString("state"),rs.getLong("revision"),rs.getString("created_at"),rs.getString("expires_at"),rs.getInt("row_count"),rs.getInt("skipped_examples"),rs.getInt("repeated_rows"),Objects.toString(rs.getString("result_id"),""));}
   private PlatformStore.ImportOutcome outcome(String id)throws SQLException{try(var st=statement("SELECT * FROM import_batches WHERE id=?",id);var rs=st.executeQuery()){if(!rs.next())throw new IllegalStateException("导入结果缺失");return new PlatformStore.ImportOutcome(id,rs.getInt("added_count"),rs.getInt("duplicate_count"),rs.getInt("preserved_count"));}}

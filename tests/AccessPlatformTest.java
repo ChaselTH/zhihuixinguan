@@ -14,8 +14,9 @@ public final class AccessPlatformTest {
       expect(IllegalArgumentException.class,()->p.apply("123","测试","WUJIN"));
       expect(IllegalArgumentException.class,()->p.apply("800000001","","WUJIN"));
       expect(IllegalArgumentException.class,()->p.apply("800000001","测试","UNKNOWN"));
-      p.apply("800000001","虚构申请人 <script>测试</script>","WUJIN");
+      p.apply("800000001","虚构申请人 <script>测试</script>","WUJIN",Role.OPERATOR);
       var r=request(p,f.root,"800000001");check(r.route().equals("BRANCH"),"route to own branch");
+      expect(IllegalArgumentException.class,()->f.store.createUser(f.root,"800000001","手工冲突",Role.OPERATOR,"WUJIN"));
       check(p.applications(f.branch,true,0,25).size()==1,"own branch list");
       check(p.applications(otherManager,true,0,25).isEmpty(),"other branch list isolated");
       expect(SecurityException.class,()->p.application(otherManager,r.id()));
@@ -25,44 +26,45 @@ public final class AccessPlatformTest {
       var notice=f.n().inbox(f.branch,true,0,25).get(0);check(p.noticeApplication(f.branch,notice.id()).equals(r.id()),"notice target authorized");
       expect(SecurityException.class,()->p.notice(otherManager,notice.id()));expect(SecurityException.class,()->f.n().markRead(otherManager,notice.id()));
       f.n().markRead(f.branch,notice.id());f.n().markRead(f.branch,notice.id());check(f.n().unreadCount(f.branch)==0&&f.n().unreadCount(f.root)==1,"personal read idempotent");
-      p.apply("800000001","冒名重复","JINTAN");check(request(p,f.root,"800000001").name().equals(r.name()),"duplicate never replaces existing identity or scope");
+      expect(IllegalArgumentException.class,()->p.apply("800000001","冒名重复","JINTAN"));check(request(p,f.root,"800000001").name().equals(r.name()),"duplicate never replaces existing identity or scope");
       expect(SecurityException.class,()->p.decide(f.branch,r.id(),1,"APPROVE",Role.BRANCH_ADMIN,"",id()));
       expect(IllegalArgumentException.class,()->p.decide(f.branch,r.id(),1,"REJECT",null,"",id()));
       expect(ConcurrentModificationException.class,()->p.decide(f.branch,r.id(),0,"APPROVE",Role.OPERATOR,"",id()));
       p.decide(f.branch,r.id(),1,"ESCALATE",null,"需要支行管理员权限",id());
       check(p.application(f.branch,r.id()).state().equals("ESCALATED"),"escalation persisted");
       expect(SecurityException.class,()->p.decide(f.branch,r.id(),2,"APPROVE",Role.OPERATOR,"",id()));
-      String requestId=id();var decision=p.decide(f.div,r.id(),2,"APPROVE",Role.BRANCH_ADMIN,"已核验",requestId);
+      String requestId=id();var decision=p.decide(f.div,r.id(),2,"APPROVE",Role.OPERATOR,"已核验",requestId);
       check(decision.created()!=null&&decision.created().user().mustChangePassword(),"approved initial password with first-login gate");
       check(f.store.authenticateUser("800000001",decision.created().initialPassword())!=null,"new password authenticates");
-      var replay=p.decide(f.div,r.id(),2,"APPROVE",Role.BRANCH_ADMIN,"已核验",requestId);
+      var replay=p.decide(f.div,r.id(),2,"APPROVE",Role.OPERATOR,"已核验",requestId);
       check(replay.replayed()&&replay.created()==null,"repeat never redisplays credential");
-      expect(IllegalArgumentException.class,()->p.decide(f.div,r.id(),2,"APPROVE",Role.OPERATOR,"已核验",requestId));
+      expect(IllegalArgumentException.class,()->p.decide(f.div,r.id(),2,"APPROVE",Role.BRANCH_ADMIN,"已核验",requestId));
       expect(SecurityException.class,()->p.decide(f.div,r.id(),3,"APPROVE",Role.BRANCH_ADMIN,"",id()));
-      p.apply("800000001","已有账号","WUJIN");check(p.applications(f.root,true,0,25).isEmpty(),"existing account application generic no mutation");
+      expect(IllegalArgumentException.class,()->p.apply("800000001","已有账号","WUJIN"));check(p.applications(f.root,true,0,25).isEmpty(),"existing account application generic no mutation");
       check(f.n().inbox(f.root,false,0,25).toString().contains(decision.created().initialPassword())==false,"password absent from notices");
       check(p.audit(f.root,filter("security"),0,100).toString().contains(decision.created().initialPassword())==false,"password absent from audit including details");
-      p.apply("800000002","分行申请","CZ");var division=request(p,f.root,"800000002");
+      p.apply("800000002","分行申请","CZ",Role.DIVISION_ADMIN);var division=request(p,f.root,"800000002");
       expect(SecurityException.class,()->p.application(f.div,division.id()));expect(SecurityException.class,()->p.decide(f.div,division.id(),1,"APPROVE",Role.DIVISION_ADMIN,"",id()));
       check(p.decide(f.root,division.id(),1,"APPROVE",Role.DIVISION_ADMIN,"",id()).created().user().role()==Role.DIVISION_ADMIN,"division application only super approves");
-      p.apply("800000003","无人管理支行","LIYANG");var fallback=request(p,f.root,"800000003");check(fallback.route().equals("DIVISION"),"branch without manager falls back to division");
-      p.decide(f.div,fallback.id(),1,"REJECT",null,"需补充身份核验",id());p.apply("800000003","重新申请","LIYANG");check(!request(p,f.root,"800000003").id().equals(fallback.id()),"rejected application can reapply");
+      expect(IllegalStateException.class,()->p.apply("800000003","无人管理支行","LIYANG",Role.OPERATOR));
       int faultCase=0;for(String point:List.of("access-account-written","notification-written","access-decision-written")) {
-        String number="81000000"+(++faultCase);p.apply(number,"回滚测试","WUJIN");var rollback=request(p,f.root,number);int users=f.store.listUsers(f.root).size();long unread=f.n().unreadCount(f.root);int audit=p.audit(f.root,filter("security"),0,100).size();
+        String number="81000000"+(++faultCase);p.apply(number,"回滚测试","WUJIN",Role.OPERATOR);var rollback=request(p,f.root,number);int users=f.store.listUsers(f.root).size();long unread=f.n().unreadCount(f.root);int audit=p.audit(f.root,filter("security"),0,100).size();
         f.fail(point,1);expect(IllegalStateException.class,()->p.decide(f.div,rollback.id(),1,"APPROVE",Role.OPERATOR,"",id()));
         check(f.store.listUsers(f.root).size()==users&&f.n().unreadCount(f.root)==unread&&p.audit(f.root,filter("security"),0,100).size()==audit,"account notification audit roll back: "+point);
         check(p.application(f.root,rollback.id()).state().equals("PENDING"),"failed decision preserves pending application");
         p.decide(f.div,rollback.id(),1,"REJECT",null,"测试结束",id());
       }
-      f.fail("notification-written",1);expect(IllegalStateException.class,()->p.apply("820000001","申请回滚","WUJIN"));p.apply("820000001","申请重试","WUJIN");check(request(p,f.root,"820000001").name().equals("申请重试"),"application and number lock rollback");
-      p.apply("830000001","并发申请","WUJIN");var race=request(p,f.root,"830000001");String key=id();var results=race(()->p.decide(f.div,race.id(),1,"APPROVE",Role.OPERATOR,"",key),()->p.decide(f.div,race.id(),1,"APPROVE",Role.OPERATOR,"",key));
+      f.fail("notification-written",1);expect(IllegalStateException.class,()->p.apply("820000001","申请回滚","WUJIN",Role.OPERATOR));p.apply("820000001","申请重试","WUJIN",Role.OPERATOR);check(request(p,f.root,"820000001").name().equals("申请重试"),"application and number lock rollback");
+      p.apply("830000001","并发申请","WUJIN",Role.OPERATOR);var race=request(p,f.root,"830000001");String key=id();var results=race(()->p.decide(f.div,race.id(),1,"APPROVE",Role.OPERATOR,"",key),()->p.decide(f.div,race.id(),1,"APPROVE",Role.OPERATOR,"",key));
       check(results.stream().filter(v->v instanceof AccessPlatform.Decision d&&d.created()!=null).count()==1,"same request race reveals password once");
       check(results.stream().filter(v->v instanceof AccessPlatform.Decision d&&d.replayed()).count()==1,"same request race idempotent");
-      p.apply("830000002","竞争审批","WUJIN");var competition=request(p,f.root,"830000002");var competed=race(()->p.decide(f.div,competition.id(),1,"APPROVE",Role.OPERATOR,"",id()),()->p.decide(f.branch,competition.id(),1,"REJECT",null,"核验失败",id()));check(competed.stream().filter(v->v instanceof AccessPlatform.Decision).count()==1,"different decisions only one wins");
+      p.apply("830000002","竞争审批","WUJIN",Role.OPERATOR);var competition=request(p,f.root,"830000002");var competed=race(()->p.decide(f.div,competition.id(),1,"APPROVE",Role.OPERATOR,"",id()),()->p.decide(f.branch,competition.id(),1,"REJECT",null,"核验失败",id()));check(competed.stream().filter(v->v instanceof AccessPlatform.Decision).count()==1,"different decisions only one wins");
       String hash="a".repeat(64);p.acknowledge(f.op,hash,AccessPlatform.SAFETY_VERSION);p.acknowledge(f.op,hash,AccessPlatform.SAFETY_VERSION);
       expect(IllegalArgumentException.class,()->p.acknowledge(f.op,hash,"stale"));
       f.fail("access-safety-written",1);expect(IllegalStateException.class,()->p.acknowledge(f.op,"b".repeat(64),AccessPlatform.SAFETY_VERSION));
       auditTests(f);
+      for(var pendingApp:p.applications(f.branch,true,0,100))p.decide(f.branch,pendingApp.id(),pendingApp.revision(),"REJECT",null,"清理合成待办",id());
+      p.apply("840000001","责任待办","WUJIN",Role.OPERATOR);var responsibility=request(p,f.root,"840000001");UserAccount branchBefore=f.store.sessionUser(f.branch.userId());expect(IllegalStateException.class,()->f.store.updateUser(f.root,branchBefore.id(),branchBefore.revision(),branchBefore.name(),Role.BRANCH_ADMIN,"JINTAN",true));p.decide(f.branch,responsibility.id(),1,"REJECT",null,"责任测试结束",id());UserAccount branchUser=f.store.sessionUser(f.branch.userId());f.store.updateUser(f.root,branchUser.id(),branchUser.revision(),branchUser.name(),Role.BRANCH_ADMIN,"JINTAN",true);
       f.store.updateUser(f.root,otherManager.userId(),otherManager.identityRevision(),"迁移人员",Role.BRANCH_ADMIN,"WUJIN",true);
       expect(SecurityException.class,()->p.applications(otherManager,true,0,25));
       f.reopen();check(f.store.access().application(f.div,r.id()).state().equals("APPROVED"),"application decision survives restart");
@@ -97,7 +99,7 @@ public final class AccessPlatformTest {
       }
       st.execute("INSERT INTO access_requests VALUES('old-application','880000001','虚构旧申请','WUJIN','PENDING','2026-09-01T00:00:00Z',NULL,NULL)");
     }
-    try(PlatformStore store=new PlatformStore(dir)){String password=id();store.bootstrapSuperAdmin("880000002",password);var actor=store.authenticateUser("880000002",password).actor();check(store.schemaVersion()==4,"V2 upgrades to V4");check(store.access().applications(actor,true,0,25).get(0).number().equals("880000001"),"preallocated application data preserved");store.access().apply("880000001","重复旧申请","JINTAN");check(store.access().applications(actor,true,0,25).size()==1,"V2 pending numbers backfilled");}
+    try(PlatformStore store=new PlatformStore(dir)){String password=id();store.bootstrapSuperAdmin("880000002",password);var actor=store.authenticateUser("880000002",password).actor();check(store.schemaVersion()==5,"V2 upgrades to V5");check(store.access().applications(actor,true,0,25).get(0).number().equals("880000001"),"preallocated application data preserved");expect(IllegalArgumentException.class,()->store.access().apply("880000001","重复旧申请","JINTAN",Role.OPERATOR));check(store.access().applications(actor,true,0,25).size()==1,"V2 pending numbers backfilled");}
     Path failed=Files.createTempDirectory("xinguan-a1-failed-upgrade-");expect(java.io.IOException.class,()->{try(var ignored=new PlatformStore(failed,Clock.systemUTC(),point->{if(point.equals("migration-3-step-2"))throw new IllegalStateException("synthetic fault");})) {throw new AssertionError("fault missing");}});
     expect(java.io.IOException.class,()->{try(var ignored=new PlatformStore(failed)) {throw new AssertionError("partial migration accepted");}});
   }

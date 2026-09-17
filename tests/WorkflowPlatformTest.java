@@ -257,7 +257,7 @@ public final class WorkflowPlatformTest {
       st.execute("INSERT INTO migration_items VALUES('synthetic/legacy/1','old-record','old-source')");
     }
     try(PlatformStore store=new PlatformStore(dir)){
-      check(store.schemaVersion()==4,"V1 upgrades to V4");var oldUser=store.authenticateUser("000000001",password);check(oldUser!=null,"V1 credential preserved");
+      check(store.schemaVersion()==5,"V1 upgrades to V5");var oldUser=store.authenticateUser("000000001",password);check(oldUser!=null,"V1 credential preserved");
       BusinessRecord row=store.find(oldUser.actor(),"old-record");
       check(row.version()==7&&row.values().equals(oldValues),"V1 formal ids versions and feedback preserved");
       check(row.legacyExtras().get("旧字段").equals("虚构历史备注"),"V1 legacy metadata preserved");
@@ -265,7 +265,7 @@ public final class WorkflowPlatformTest {
     }
     try(PlatformStore store=new PlatformStore(dir)){check(store.authenticateUser("000000001",password).id().equals("old-user"),"migration idempotent preserves account id");}
     try(Connection db=connect(dir);Statement st=db.createStatement();ResultSet rs=st.executeQuery("SELECT version,checksum FROM schema_migrations ORDER BY version")) {
-      check(rs.next()&&rs.getInt(1)==1&&rs.getString(2).equals(Codec.hash(v1)),"original V1 checksum unchanged");check(rs.next()&&rs.getInt(1)==2&&rs.next()&&rs.getInt(1)==3&&rs.next()&&rs.getInt(1)==4&&!rs.next(),"four sequential schema versions");
+      check(rs.next()&&rs.getInt(1)==1&&rs.getString(2).equals(Codec.hash(v1)),"original V1 checksum unchanged");check(rs.next()&&rs.getInt(1)==2&&rs.next()&&rs.getInt(1)==3&&rs.next()&&rs.getInt(1)==4&&rs.next()&&rs.getInt(1)==5&&!rs.next(),"five sequential schema versions");
     }
     try(Connection db=connect(dir);Statement st=db.createStatement();ResultSet rs=st.executeQuery("SELECT result_id FROM processed_requests WHERE id='old-request'")){check(rs.next()&&rs.getString(1).equals("old-result"),"V1 idempotency record preserved");}
     try(Connection db=connect(dir);Statement st=db.createStatement();ResultSet rs=st.executeQuery("SELECT source_hash FROM migration_items WHERE legacy_key='synthetic/legacy/1'")){check(rs.next()&&rs.getString(1).equals("old-source"),"V1 legacy migration marker preserved");}
@@ -276,7 +276,7 @@ public final class WorkflowPlatformTest {
     try(Connection db=connect(dir);Statement st=db.createStatement()){st.execute("UPDATE schema_migrations SET checksum='bad' WHERE version=1");}
     expect(IOException.class,()->{try(var ignored=new PlatformStore(dir)){throw new AssertionError("tampered checksum accepted");}});
     try(Connection db=connect(dir);PreparedStatement st=db.prepareStatement("UPDATE schema_migrations SET checksum=? WHERE version=1")){st.setString(1,Codec.hash(v1));st.executeUpdate();}
-    try(Connection db=connect(dir);Statement st=db.createStatement()){st.execute("INSERT INTO schema_migrations VALUES(5,'future','2026-09-14T00:00:00Z')");}
+    try(Connection db=connect(dir);Statement st=db.createStatement()){st.execute("INSERT INTO schema_migrations VALUES(6,'future','2026-09-14T00:00:00Z')");}
     expect(IOException.class,()->{try(var ignored=new PlatformStore(dir)){throw new AssertionError("future version accepted");}});
   }
 

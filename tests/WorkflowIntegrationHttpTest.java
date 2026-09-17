@@ -37,9 +37,9 @@ final class WorkflowIntegrationHttpTest {
     check(post("/workflow/confirm",confirm).statusCode()==200,"same confirmation idempotent through Main");
     check(!exportText("negative").contains("INTEGRATION_DRAFT_ONLY"),"pending snapshot excluded from export");
     use(otherClient);check(get("/workflow/submission?id="+first).statusCode()==403&&get("/audit?submissionId="+first).statusCode()==403,"cross branch snapshot and audit target blocked");
-    use(reviewer);String notices=get("/notifications?unread=yes").body();String notice=match(notices,"/notifications/detail\\?id=([^\"]+)");String detail=get("/notifications/detail?id="+notice).body();
+    use(reviewer);String notices=get("/notifications?unread=yes").body();String notice=match(notices,"/notifications/open[\\s\\S]*?name=\"id\" value=\"([^\"]+)\"");String detail=get("/notifications/detail?id="+notice).body();
     check(detail.contains("/workflow/submission?id="+first),"A1 notification links actual B1 submission");
-    check(post("/notifications/read",form(detail,"/notifications/read")).statusCode()==303,"notification read succeeds");
+    Map<String,String> open=HttpSmokeTest.hidden(notices);open.put("id",notice);check(post("/notifications/open",open).statusCode()==303,"notification open marks read and targets submission");
     String queue=get("/workflow/reviews").body();check(queue.contains(first.substring(0,8))&&!queue.contains("<option value=\"APPROVED\""),"read notice does not clear pending review; filter markup valid");
     var rejection=form(get("/workflow/submission?id="+first).body(),"/workflow/review/reject");rejection.put("reason","");check(post("/workflow/review/reject",rejection).statusCode()==400,"return reason required");
     rejection.put("reason","补充 <核验> 内容");check(post("/workflow/review/reject",rejection).statusCode()==200,"reviewer returns through Main");

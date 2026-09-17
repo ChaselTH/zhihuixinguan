@@ -41,7 +41,7 @@ final class ImportHttpTest {
     check(post("/imports/confirm",Map.of("csrf",csrf(),"token",cancelled,"revision","1","mode","saved")).statusCode()==409,"cancelled task cannot publish");
     String audit=get("/audit?category=business&search="+token).body();check(audit.contains("IMPORT_CONFIRM")||audit.contains("导入确认"),"confirmation decisions in shared authorized audit");
     use(branch);check(!get("/audit?category=business&search="+token).body().contains("SKIP"),"branch audit cannot see other branch import decisions");
-    use(division);check(get("/foundation").body().contains("数据库结构：4"),"diagnostic page reflects actual migrated schema");
+    use(division);check(get("/foundation").body().contains("数据库结构：5"),"diagnostic page reflects actual migrated schema");
     var unified=uploadBundle(bundleWorkbook(),"unified.xlsx",csrf());check(unified.statusCode()==200&&unified.body().contains("三表统一工作簿")&&!unified.body().contains("identity-card import-item"),"unified upload stages one compact three-sheet preview");String unifiedToken=HttpSmokeTest.hidden(unified.body()).get("token");check(unifiedToken!=null&&get("/imports/preview?token="+unifiedToken+"&details=yes").body().contains("bundle-negative"),"unified preview can expand source details on demand");check(post("/imports/confirm",Map.of("csrf",csrf(),"token",unifiedToken,"mode","saved")).statusCode()==303,"unified confirmation commits all sheets once");
     System.out.println("IMPORT_HTTP_OK assertions="+assertions+" real Main forms, bulk errors, private staging, choices, confirm, cancellation and audit");
   }
