@@ -35,6 +35,8 @@ public final class FeedbackDeadlines {
       DatasetSchema.get(dataset);
       if(period==null||period.isBlank()||period.length()>100||revision<0)throw new IllegalArgumentException("期次或设置版本无效");
       LocalDate due=parseDate(date);
+      LocalDate today=clock.instant().atZone(FeedbackTiming.ZONE).toLocalDate();
+      if(due!=null&&!due.isAfter(today))throw new IllegalArgumentException("反馈截止日期只能设置为北京时间今天之后的日期，最早为 "+today.plusDays(1));
       try(var st=db.prepareStatement("SELECT COUNT(*) FROM official_records WHERE dataset=? AND period_key=?")){
         st.setString(1,dataset);st.setString(2,period);try(var rs=st.executeQuery()){rs.next();if(rs.getInt(1)==0)throw new IllegalArgumentException("该清单期次不存在，请先导入数据");}
       }

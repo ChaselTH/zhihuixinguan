@@ -20,7 +20,7 @@ final class FeedbackPages extends PageLayout {
     boolean manager=AccessPolicy.all(currentSession.actor);
     StringBuilder b=new StringBuilder(backButton("/?"+data.range.queryString())).append("<h1>反馈截止日期</h1>");
     if(!notice.isEmpty())b.append("<p class=\"alert alert-success\">").append(e(notice)).append("</p>");
-    b.append(rangeForm("/deadlines",data,"")).append("<p>按清单和来源期次分别设置，对全部支行生效。截止当天结束前有效；超期不阻止继续填写和复核。</p>");
+    b.append(rangeForm("/deadlines",data,"")).append("<p>按清单和来源期次分别设置，对全部支行生效。新设或修改只能选择北京时间今天之后的日期（最早明天）。截止当天结束前有效；已有日期到期后仍保留，超期不阻止继续填写和复核。</p>");
     if(!manager)b.append("<p>仅超级管理员和分行管理员可以调整日期；以下只展示本支行涉及的期次。</p>");
     b.append("<div class=\"table-scroll\"><table class=\"data-table feedback-table\"><thead><tr><th>清单</th><th>来源期次</th><th>已完成／总数</th><th>截止日期与剩余时间</th><th>").append(manager?"设置":"明细").append("</th></tr></thead><tbody>");
     for(var p:data.feedbackPeriods()){

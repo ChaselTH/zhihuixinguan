@@ -1,5 +1,7 @@
 # PR0 公共基础与后续双 AI 交接约定
 
+2026-09-17 rc.5：`FeedbackDeadlines.save` 非空日期必须严格晚于服务端时钟的北京时间今天，今天和过去日期返回 400 且不写配置／审计；空值取消不受限制，读取旧到期日期不拒绝。无新迁移。增加 `PlatformStore(Path, Clock)` 与页面 DataStore 的受控时钟构造以验证时间流逝，不提供 HTTP 修改时钟的入口。
+
 2026-09-17 rc.4 最新补充：schema 6 新增 `feedback_deadlines`，不修改 V001～V005；通过 `PlatformStore.deadlines()` 读写，主键为清单＋来源期次，乐观版本和配置／审计同事务。`GET /deadlines` 按机构隔离；`POST /deadlines/save` 仅超级／分行管理员且要求 CSRF。北京时间截止当天包含在期限内；只依据正式完成状态判超期，草稿／待复核不计。业务筛选／导出支持 `completion=overdue` 与精确 `period`。详见 [rc.4 契约和验证](rc4-反馈截止日期.md)。
 
 2026-09-17 rc.3 最新口径覆盖历史展示／导入说明：三类清单均属于风险预警；交叉违约按 L 列首次违约日期分月，HTTP 上传不再接受公共月份／补充期次。新增 `POST /imports/confirm-bulk` 统一选择并确认，保留旧事务、幂等和版本保护；`ImportPlatform.Summary` 新增 `preserveUpdated`／`overwriteUpdated`。新增 `/progress`、`/export/progress`，后者只允许超级／分行管理员；业务清单新增 `pageSize=10|20|50`（默认 20），导出仍为完整筛选结果。schema 保持 5；升级不自动删除任何历史数据。详见 [rc.3 说明](rc3-导入与风险展示调整.md)。

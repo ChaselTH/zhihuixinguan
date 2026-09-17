@@ -45,6 +45,26 @@ public class FeedbackDeadlinesTest {
       try(var c=connect(f.dir);var st=c.createStatement()){st.execute("DROP TABLE feedback_deadlines");st.execute("DELETE FROM schema_migrations WHERE version=6");st.execute("DELETE FROM schema_migration_attempts WHERE version=6");}
       f.open();check(f.store.schemaVersion()==6&&f.store.list(f.root,null,null,null).size()==records&&f.store.deadlines().visible(f.root).isEmpty(),"V5 to V6 upgrade preserves records and starts unconfigured");
     }
+    try(var f=new Fixture()){
+      var row=f.record("WUJIN","multi");String period=row.period().key();var key=new FeedbackDeadlines.Key("multi",period);
+      int audit=f.store.diagnostics().get("audit_events");
+      for(var actor:List.of(f.root,f.div))for(String date:List.of("2026-09-13","2026-09-14")){
+        expect(IllegalArgumentException.class,()->f.store.deadlines().save(actor,"multi",period,date,0));
+      }
+      check(f.store.deadlines().visible(f.root).isEmpty()&&f.store.diagnostics().get("audit_events")==audit,"rejected dates write no config or audit");
+      f.clock.instant=Instant.parse("2026-09-14T15:59:59.999Z");
+      check(f.store.deadlines().save(f.root,"multi",period,"2026-09-15",0).revision()==1,"tomorrow allowed immediately before Beijing midnight");
+      f.clock.advance(Duration.ofMillis(1));
+      audit=f.store.diagnostics().get("audit_events");
+      expect(IllegalArgumentException.class,()->f.store.deadlines().save(f.div,"multi",period,"2026-09-15",1));
+      expect(IllegalArgumentException.class,()->f.store.deadlines().save(f.root,"multi",period,"2026-09-14",1));
+      check(f.store.deadlines().visible(f.op).get(key).revision()==1&&f.store.diagnostics().get("audit_events")==audit,"new Beijing day rejects today and yesterday without overwriting saved deadline");
+      f.clock.advance(Duration.ofDays(1));f.reopen();
+      var expired=f.store.deadlines().visible(f.op).get(key);
+      check(expired.dueDate().equals(LocalDate.of(2026,9,15))&&FeedbackTiming.overdue(expired.dueDate(),false,f.clock.instant()),"saved deadlines remain readable and become overdue after time passes");
+      check(f.store.deadlines().save(f.div,"multi",period,"2026-09-17",1).revision()==2,"may extend an expired deadline to tomorrow");
+      check(f.store.deadlines().save(f.root,"multi",period,"",2).dueDate()==null,"cancellation does not require a future date");
+    }
     LocalDate due=LocalDate.of(2026,9,20);Instant midnight=Instant.parse("2026-09-20T16:00:00Z");
     check(!FeedbackTiming.overdue(due,false,midnight.minusMillis(1)),"inclusive deadline day through 23:59:59.999 Beijing");
     check(FeedbackTiming.overdue(due,false,midnight),"overdue at next Beijing midnight");

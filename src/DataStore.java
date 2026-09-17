@@ -7,9 +7,14 @@ import xinguan.platform.*;
 final class DataStore implements AutoCloseable {
   final PlatformStore platform;
   final Path root;
+  private final Clock clock;
   DataStore(Path root)throws Exception {
+    this(root,Clock.systemUTC());
+  }
+  DataStore(Path root,Clock clock)throws Exception {
+    this.clock=Objects.requireNonNull(clock);
     this.root=root.toAbsolutePath().normalize();Files.createDirectories(this.root);
-    platform=new PlatformStore(this.root);
+    platform=new PlatformStore(this.root,clock);
     try{migrate();}catch(Exception e){platform.close();throw e;}
   }
   Path dataRoot(){return root;}
@@ -21,7 +26,7 @@ final class DataStore implements AutoCloseable {
     return new ArrayList<>(months);
   }
   private List<ImportRecord> adapt(List<BusinessRecord> rows,ActorContext actor){
-    var deadlines=platform.deadlines().visible(actor);Instant asOf=Instant.now();
+    var deadlines=platform.deadlines().visible(actor);Instant asOf=clock.instant();
     List<ImportRecord> result=new ArrayList<>();
     for(BusinessRecord row:rows){
       ImportRecord r=new ImportRecord();r.id=row.id();r.dataset=row.dataset();r.period=row.period().key();r.month=YearMonth.from(row.period().start()).toString();r.filename=row.filename();r.importedAt=row.importedAt();r.updatedAt=row.updatedAt();
