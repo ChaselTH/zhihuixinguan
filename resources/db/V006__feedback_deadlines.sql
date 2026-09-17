@@ -1,0 +1,1 @@
+CREATE TABLE feedback_deadlines (dataset VARCHAR(32) NOT NULL, period_key VARCHAR(100) NOT NULL, due_date DATE, revision BIGINT NOT NULL, updated_by VARCHAR(80) NOT NULL REFERENCES users(id), updated_at VARCHAR(40) NOT NULL, PRIMARY KEY(dataset,period_key));

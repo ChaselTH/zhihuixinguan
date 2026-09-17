@@ -19,3 +19,22 @@
 .progress-total{font-weight:bold;background:#eff3f9}
 .progress-table{min-width:850px}
 .foundation-upload-card{float:none;width:auto;max-width:760px;margin:0;padding:28px}
+/* Feedback dates are server-authoritative; keep yellow input columns unchanged. */
+.data-table tr.row-overdue td{background:#fff0ef}
+.data-table tr.row-overdue td.editable-cell{background:#fff9d9}
+.business-badge.overdue{background:#ffe0dd;color:#a52921;border-color:#e9aaa5}
+.feedback-due{display:block;font-size:12px;line-height:1.7;margin-top:6px;color:#946142}
+.feedback-panel .feedback-list{padding:4px 20px}
+.feedback-item{padding:14px 4px;border-bottom:1px solid #e5eaf0;line-height:2}
+.feedback-item strong,.feedback-item span,.feedback-item a{display:inline-block;margin-right:24px}
+.feedback-item>strong:first-child{min-width:115px}
+.feedback-item>span{min-width:160px;color:#647286}
+.feedback-item.feedback-late{background:#fff0ef}
+.feedback-remaining{color:#246948}
+.feedback-late .feedback-remaining{color:#b52d25}
+.feedback-note{padding:0 24px 14px;font-size:13px;color:#69778a}
+.feedback-table{min-width:1000px}
+.feedback-table td{vertical-align:top;white-space:normal}
+.deadline-form{margin-bottom:10px;white-space:normal}
+.deadline-form label{display:inline-block}
+.deadline-form input{width:150px;padding:8px;border:1px solid #bac9d7;font-size:14px}

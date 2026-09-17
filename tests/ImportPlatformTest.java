@@ -109,9 +109,9 @@ public final class ImportPlatformTest {
     int records=f.store.list(f.div,null,null,null).size(),drafts=f.store.diagnostics().get("drafts"),submissions=f.store.diagnostics().get("submissions");f.store.close();
     // Isolated fixture stripped of V4/V5-only tables is an exact V3 schema, with real legacy rows.
     try(var db=WorkflowPlatformTest.connect(f.dir);var st=db.createStatement()){
-      st.execute("DROP TABLE import_job_rows");st.execute("DROP TABLE import_jobs");st.execute("DELETE FROM schema_migrations WHERE version>=4");st.execute("DELETE FROM schema_migration_attempts WHERE version>=4");
+      st.execute("DROP TABLE feedback_deadlines");st.execute("DROP TABLE import_job_rows");st.execute("DROP TABLE import_jobs");st.execute("DELETE FROM schema_migrations WHERE version>=4");st.execute("DELETE FROM schema_migration_attempts WHERE version>=4");
     }
-    f.open();check(f.store.schemaVersion()==5,"V3 migrates to V5");check(f.store.list(f.div,null,null,null).size()==records&&f.store.diagnostics().get("drafts")==drafts&&f.store.diagnostics().get("submissions")==submissions,"V3 official, drafts and submissions preserved");
+    f.open();check(f.store.schemaVersion()==6,"V3 migrates to V6");check(f.store.list(f.div,null,null,null).size()==records&&f.store.diagnostics().get("drafts")==drafts&&f.store.diagnostics().get("submissions")==submissions,"V3 official, drafts and submissions preserved");
     check(f.store.importing().jobs(f.div,0,25).isEmpty(),"V5 starts empty staging");
   }
   static SourceRow source(BusinessRecord r){return new SourceRow(r,"虚构子表",3);}

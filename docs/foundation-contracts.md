@@ -1,5 +1,7 @@
 # PR0 公共基础与后续双 AI 交接约定
 
+2026-09-17 rc.4 最新补充：schema 6 新增 `feedback_deadlines`，不修改 V001～V005；通过 `PlatformStore.deadlines()` 读写，主键为清单＋来源期次，乐观版本和配置／审计同事务。`GET /deadlines` 按机构隔离；`POST /deadlines/save` 仅超级／分行管理员且要求 CSRF。北京时间截止当天包含在期限内；只依据正式完成状态判超期，草稿／待复核不计。业务筛选／导出支持 `completion=overdue` 与精确 `period`。详见 [rc.4 契约和验证](rc4-反馈截止日期.md)。
+
 2026-09-17 rc.3 最新口径覆盖历史展示／导入说明：三类清单均属于风险预警；交叉违约按 L 列首次违约日期分月，HTTP 上传不再接受公共月份／补充期次。新增 `POST /imports/confirm-bulk` 统一选择并确认，保留旧事务、幂等和版本保护；`ImportPlatform.Summary` 新增 `preserveUpdated`／`overwriteUpdated`。新增 `/progress`、`/export/progress`，后者只允许超级／分行管理员；业务清单新增 `pageSize=10|20|50`（默认 20），导出仍为完整筛选结果。schema 保持 5；升级不自动删除任何历史数据。详见 [rc.3 说明](rc3-导入与风险展示调整.md)。
 
 B2 向后兼容补充（2026-09-16）：用户授权当前维护人承接 B2，`codex/v0.3-views` 从 A2 的 `37d04998c83e05695c22d00eaf79849c05bb0f4e` 切出，通过以 `codex/v0.3-import` 为 base 的依赖 PR 审查增量；先合并 A2，再改 B2 的 base 为 main 并复验。这是同一维护人接续开发的明确调整，替代下方历史双 AI 并行基线安排，不授权另一台 AI 重做。`BusinessFilter` 统一清单与授权导出的 `completion=all/complete/incomplete`；`BusinessWorkflowState` 仅通过公共服务读取私人草稿／授权提交，不把其值合并进正式行；`BusinessRoutes` 在 Main 原身份门禁后注册 `/internal` 和 `/records/history` 等路由；工作流编辑兼容增加授权 `record` 定位参数。无新迁移、公共持久化签名及身份规则变化。详见 [B2 交接说明](B2-业务展示交接.md)。

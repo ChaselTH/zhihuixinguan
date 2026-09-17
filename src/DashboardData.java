@@ -30,8 +30,23 @@ final class DashboardData {
     List<RowRef> result=new ArrayList<>();DatasetSchema s=DatasetSchema.get(dataset);String needle=q==null?"":q.strip().toLowerCase(Locale.ROOT);
     for(RowRef ref:rows(dataset)){if(branch!=null&&!branch.isBlank()&&!branch.equals(s.value(ref.values,s.branchColumn)))continue;
       if(status.equals("complete")&&!s.complete(ref.values)||status.equals("incomplete")&&s.complete(ref.values))continue;
+      if(status.equals("overdue")&&!ref.overdue())continue;
       if(needle.isEmpty()||ref.values.stream().anyMatch(v->v.toLowerCase(Locale.ROOT).contains(needle)))result.add(ref);
     }return result;
+  }
+  List<FeedbackPeriod> feedbackPeriods(){
+    Map<String,FeedbackPeriod> grouped=new LinkedHashMap<>();
+    for(ImportRecord r:records){
+      FeedbackPeriod p=grouped.computeIfAbsent(r.dataset+"\n"+r.period,k->new FeedbackPeriod(r));
+      for(List<String> values:r.rows){p.total++;if(DatasetSchema.get(r.dataset).complete(values))p.completed++;}
+    }
+    return grouped.values().stream().sorted(Comparator.comparing((FeedbackPeriod p)->p.period).reversed().thenComparingInt(p->List.of("multi","negative","cross").indexOf(p.dataset))).toList();
+  }
+  static final class FeedbackPeriod{
+    final String dataset,period;final java.time.LocalDate due;final long revision;final java.time.Instant asOf;int total,completed;
+    FeedbackPeriod(ImportRecord r){dataset=r.dataset;period=r.period;due=r.feedbackDeadline;revision=r.deadlineRevision;asOf=r.feedbackAsOf;}
+    boolean overdue(){return FeedbackTiming.overdue(due,total==completed,asOf);}
+    String reminder(){return total==completed?"本期已全部完成":FeedbackTiming.remaining(due,asOf);}
   }
   int totalCount(){return multiRows.size()+negativeRows.size()+crossRows.size();}
   int completedCount(){int total=0;for(ImportRecord r:records)for(List<String> row:r.rows)if(rowComplete(r.dataset,row))total++;return total;}

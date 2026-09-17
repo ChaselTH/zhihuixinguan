@@ -47,6 +47,7 @@ public final class Main extends HttpSupport {
       ImportPages imports=new ImportPages(version,session);
       if(method.equals("GET")){
         if(importing.get(x,session,q))return;
+        if(new FeedbackRoutes(store,version).get(x,session,q))return;
         if(path.equals("/export/progress")){var result=new AuthorizedExportService(store).exportProgress(session.actor,q);sendDownload(x,result.bytes(),result.filename());return;}
         if(path.equals("/export")){var result=new AuthorizedExportService(store).export(session.actor,q);sendDownload(x,result.bytes(),result.filename());return;}
         if(workflow.get(x,session,q))return;
@@ -70,6 +71,7 @@ public final class Main extends HttpSupport {
       if(method.equals("POST")){
         requireForm(x);Map<String,String> f=decodeForm(readLimited(x.getRequestBody(),2*1024*1024));if(!auth.csrf(session,f.get("csrf")))throw new SecurityException("页面校验已失效，请刷新后重试");
         if(importing.post(x,session,f))return;
+        if(new FeedbackRoutes(store,version).post(x,session,f))return;
         if(workflow.post(x,session,f))return;
         switch(path){
           case "/security/ack" -> {auth.acknowledgeSafety(session,f.get("noticeVersion"));redirect(x,"/");return;}

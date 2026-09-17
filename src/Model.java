@@ -10,6 +10,9 @@ final class ImportRecord {
   String sheetName = "";
   String importedAt = "";
   String updatedAt = "";
+  java.time.LocalDate feedbackDeadline;
+  long deadlineRevision;
+  java.time.Instant feedbackAsOf=java.time.Instant.now();
   int headerRows;
   List<String> columns = new ArrayList<String>();
   List<List<String>> rows = new ArrayList<List<String>>();
@@ -27,6 +30,8 @@ final class RowRef {
   final int rowIndex;
   final List<String> values;
 
+  boolean overdue(){return xinguan.platform.FeedbackTiming.overdue(record.feedbackDeadline,xinguan.platform.DatasetSchema.get(record.dataset).complete(values),record.feedbackAsOf);}
+  String rowClass(){return xinguan.platform.DatasetSchema.get(record.dataset).complete(values)?"row-complete":overdue()?"row-overdue":"row-pending";}
   RowRef(ImportRecord record, int rowIndex, List<String> values) {
     this.record = record;
     this.rowIndex = rowIndex;

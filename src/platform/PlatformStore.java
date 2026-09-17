@@ -20,6 +20,7 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
   private final WorkflowEngine workflow;
   private final AccessPlatform access;
   private final ImportPlatform importing;
+  private final FeedbackDeadlines deadlines;
   private final java.util.function.Consumer<String> checkpoint;
   private final Path platformDir;
   private final Path initialPasswordKeyFile;
@@ -141,7 +142,9 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
     workflow=new WorkflowEngine(this,db,clock,checkpoint);
     access=new AccessPlatform(this,db,workflow,clock,checkpoint);
     importing=new ImportPlatform(this,db,clock,checkpoint);
+    deadlines=new FeedbackDeadlines(this,db,clock,checkpoint);
   }
+  public FeedbackDeadlines deadlines(){return deadlines;}
   public ImportPlatform importing() { return importing; }
   public AccessPlatform access() { return access; }
   public WorkflowContracts.WorkflowService workflow() { return workflow; }
