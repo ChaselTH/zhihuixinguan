@@ -56,7 +56,7 @@
 
 ## 当前状态
 
-- 修订 2 已提交并推送原分支 `codex/v0.3-feedback-001`，远端 head 为 `74be2651d488c16df65464b079a2a10783bbad95`，继续使用 PR #10；PR 保持 OPEN，等待 ChaselTH 重新审查，未自行合并。
+- 修订 2 已提交并推送原分支 `codex/v0.3-feedback-001`，远端 head 已更新至 `446587d7e6f2f88cbb1b2a2700df80b6a70cfe6d`，继续使用 PR #10；PR 保持 OPEN，等待 ChaselTH 重新审查，未自行合并。
 
 ## 修订 2 复审补丁（R1、R6）
 
