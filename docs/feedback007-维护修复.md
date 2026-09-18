@@ -2,6 +2,8 @@
 
 2026-09-18，用户授权当前维护人接手 [PR #11](https://github.com/ChaselTH/zhihuixinguan/pull/11)，基于外部交付 `0c82e0b1ab55f52181e91891d941c9d7e89006e6` 修复后集成。另一台 AI 无新的 READY 任务。应用 VERSION 保持 `0.3.0-rc.8`，schema 7，不打包、不改用户运行实例、不启用云端 CI。
 
+维护修复提交 `65c8d15` 完成后，远端又抵达外部修订 `4555ef6`。本次以双亲合并保留双方历史，不强推；保留其真实 Main 跨页保存／预览／审批和超过 100 条草稿测试，生产代码重叠处采用下述公共审计、精确草稿和显式批次实现。未引入外部全量提交扫描 `history()`，避免绕过审计清理规则；也不保留重复活动状态接口。
+
 ## 审查问题与处理
 
 | 问题 | 修复 | 回归证据 |
@@ -54,7 +56,7 @@ node tests/install-smoke.mjs
 git diff --check
 ```
 
-2026-09-18 最终执行结果：三项均通过。`BUILD_OK`；重点套件 `WORKFLOW_PLATFORM_OK assertions=241`、`FEEDBACK007_REGRESSION_OK assertions=156`、`WORKFLOW_INTERACTIONS_OK assertions=43`、`WORKFLOW_ROUTES_OK assertions=92`、`BUSINESS_VIEW_OK assertions=221`。`HTTP_SMOKE_OK assertions=273` 及其五角色子套件、其余既有平台／导入／反馈／维护套件全部通过。`INSTALL_SMOKE_OK`；无 GitHub CI 运行或通过声明。
+2026-09-18 整合双方补丁后最终执行结果：三项均通过。`BUILD_OK`；重点套件 `WORKFLOW_PLATFORM_OK assertions=241`、`FEEDBACK007_REGRESSION_OK assertions=156`、`WORKFLOW_INTERACTIONS_OK assertions=43`、`WORKFLOW_ROUTES_OK assertions=100`、`BUSINESS_HTTP_OK assertions=62`、`BUSINESS_VIEW_OK assertions=221`。`HTTP_SMOKE_OK assertions=273` 及其五角色子套件、其余既有平台／导入／反馈／维护套件全部通过。`INSTALL_SMOKE_OK`；无 GitHub CI 运行或通过声明。
 
 新增 `Feedback007RegressionTest` 以及 `workflow-interactions.test.mjs`，已纳入离线构建测试；扩充 `WorkflowPlatformTest` 的混合机构原子写入、第二行／通知／事务末尾故障回滚、幂等并发、过期版本及支行裁剪测试。既有 Main 五角色 HTTP、导入、真实 XLSX 导出、人员管理、操作记录、反馈日期和迁移测试保留。
 
