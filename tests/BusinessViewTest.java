@@ -22,8 +22,8 @@ public final class BusinessViewTest {
         var own=BusinessWorkflowState.load(platform,operator,List.of(row));check(own.get(row.record.id).draft()!=null,"own active draft visible");
         for(var role:List.of(root,division,peer,reviewer,branch))check(BusinessWorkflowState.load(platform,role,List.of(row)).get(row.record.id).draft()==null,"private draft existence isolated");
         RowRef scopedRow=row;expect(SecurityException.class,()->BusinessWorkflowState.load(platform,other,List.of(scopedRow)));
-        var html=pages(operator).details(dashboard,filter(operator,dataset,"all"),1,own);check(html.contains("我的草稿")&&!html.contains("B2-PRIVATE-CONTENT"),"private draft is only a label; official cells unchanged");
-        check(html.contains("record="+row.record.id)&&html.contains("draft="+draft.id()),"row action resumes exact draft and row");
+        var html=pages(operator).details(dashboard,filter(operator,dataset,"all").withDraft(draft.id()),1,own.editing(draft,false));check(html.contains("我的草稿")&&html.contains("B2-PRIVATE-CONTENT"),"owner restores selected private draft in unified table while other roles remain isolated");
+        check(html.contains("name=\"draftId\" value=\""+draft.id()+"\"")&&html.contains("支行修改记录")&&!html.contains("查看追溯")&&!html.contains("business-row-ref"),"real page-level controls replace row edit/trace actions without hidden test markers");
         String detailTable=html.substring(html.indexOf("<table class=\"data-table detail-table\">"));detailTable=detailTable.substring(0,detailTable.indexOf("</table>"));
         check(!detailTable.contains("期次／历史保留信息")&&detailTable.split("<th[ >]",-1).length-1==schema.width()+1,"detail has only template columns plus existing workflow action column: "+dataset);
         String body=detailTable.substring(detailTable.indexOf("<tbody>"));check(body.split("<td[ >]",-1).length-1==schema.width()+1,"row cells align after extra metadata column removed");
@@ -58,7 +58,7 @@ public final class BusinessViewTest {
       }
       var empty=pages(root).dashboard(new DashboardData(RangeSelection.from(Map.of(),List.of()),List.of(),List.of(),List.of()));check(empty.contains("本期无记录")&&empty.contains("completion-icon empty"),"zero record branch is not yellow overdue/incomplete");
       var d=view(data,division);var selected=filter(division,"multi","all");String detail=pages(division).details(d,selected,1,BusinessWorkflowState.empty());check(detail.contains("business.css")&&detail.contains("col-feedback")&&!detail.contains("fetch("),"local CSS, wide feedback, HTML-only core");
-      check(!detail.contains("保存资料补充 · 预览确认")&&detail.contains("跨支行清单请先筛选"),"mixed organization list does not offer invalid whole-page submission");
+      check(detail.contains("保存资料补充 · 预览确认")&&!detail.contains("跨支行清单请先筛选"),"division administrator can submit mixed-branch page in one transaction");
       var single=BusinessFilter.from(division,Map.of("dataset","multi","branch","武进"));check(pages(division).details(d,single,1,BusinessWorkflowState.empty()).contains("保存资料补充 · 预览确认"),"one branch keeps batch preview action");
       var internal=new InternalPages("test",session(operator)).overview(view(data,operator),filter(operator,"cross","all"),BusinessWorkflowState.empty());check(internal.contains("行内报表 · 待配置")&&!internal.contains("dataset=negative"),"internal module does not masquerade risk schemas as unknown templates");
       for(var actor:List.of(root,division,branch,operator,reviewer))for(String completion:List.of("all","complete","incomplete"))for(var range:List.of(Map.of("scope","year","year","2026"),Map.of("scope","quarter","year","2026","quarter","3"),Map.of("scope","custom","start","2026-07","end","2026-09"))){

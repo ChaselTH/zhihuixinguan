@@ -7,7 +7,7 @@ import java.util.*;
 public final class WorkflowContracts {
   private WorkflowContracts() {}
   public enum State { SUBMITTED, APPROVED, RETURNED }
-  public enum Mode { REVIEW, DIRECT }
+  public enum Mode { REVIEW, DIRECT, BATCH_DIRECT }
   public enum Code {
     INVALID_INPUT, NOT_FOUND, VERSION_CONFLICT, CONFIRMATION_EXPIRED,
     ALREADY_SUBMITTED, ALREADY_DECIDED, NO_REVIEWER, OWNER_CHANGED,
@@ -36,6 +36,14 @@ public final class WorkflowContracts {
       return List.copyOf(result);
     }
   }
+  /** A batch envelope is not an ordinary CZ business submission: rows retain their real branch. */
+  public record BranchSnapshot(String organizationId,List<SnapshotRow> rows) {
+    public BranchSnapshot { rows=List.copyOf(rows);if(rows.stream().anyMatch(row->!row.before().organizationId().equals(organizationId)))throw new IllegalArgumentException("子快照机构不一致"); }
+  }
+  public static List<BranchSnapshot> branchSnapshots(List<SnapshotRow> rows){
+    Map<String,List<SnapshotRow>> groups=new LinkedHashMap<>();for(var row:rows)groups.computeIfAbsent(row.before().organizationId(),key->new ArrayList<>()).add(row);
+    return groups.entrySet().stream().map(e->new BranchSnapshot(e.getKey(),e.getValue())).toList();
+  }
   public record Draft(String id, String ownerId, String organizationId, String dataset,
                       long version, Instant updatedAt, String priorSubmissionId, List<SnapshotRow> rows) {
     public Draft { rows=List.copyOf(rows); }
@@ -61,6 +69,8 @@ public final class WorkflowContracts {
     Draft saveDraft(ActorContext actor, String id, long expectedVersion, String dataset,
                     List<RecordChange> changes, String priorSubmissionId, String requestId);
     Draft draft(ActorContext actor, String id);
+    /** Owner-only point lookup; rejects consumed revisions, independent of list pagination. */
+    Draft editableDraft(ActorContext actor, String id);
     List<Draft> drafts(ActorContext actor, String dataset, int offset, int limit);
     Preview previewDraft(ActorContext actor, String draftId, long expectedVersion);
     Preview previewDirect(ActorContext actor, String dataset, List<RecordChange> changes);

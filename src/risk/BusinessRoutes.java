@@ -1,5 +1,6 @@
 import com.sun.net.httpserver.HttpExchange;
 import java.util.*;
+import java.time.*;
 import xinguan.platform.*;
 import xinguan.platform.WorkflowContracts.*;
 
@@ -23,19 +24,43 @@ final class BusinessRoutes extends HttpSupport {
       html=pages.branch(data,filter.branch,states(session,shown));
     }else if(path.equals("/internal"))html=new InternalPages(version,session).overview(data,filter,states(session,filter.rows(data).stream().limit(8).toList()));
     else{
+      Draft active=null;boolean choose=false;
+      if(session.actor.role()==Role.OPERATOR){
+        var workflow=store.platform.workflow();
+        if(!filter.draft.isEmpty()&&!filter.draft.equals("new")){
+          active=workflow.editableDraft(session.actor,filter.draft);
+          if(!active.dataset().equals(filter.dataset))throw new IllegalArgumentException("草稿与当前表种不一致");
+        }else if(filter.draft.isEmpty()){
+          // Resolve from the whole dataset, never just the visible page's records.
+          var candidates=workflow.drafts(session.actor,filter.dataset,0,2);
+          if(candidates.size()==1)active=candidates.get(0);
+          else choose=candidates.size()>1;
+        }
+        if(active!=null)filter=filter.withDraft(active.id());
+      }
       List<RowRef> selected=filter.rows(data);int pagesCount=Math.max(1,(selected.size()+filter.pageSize-1)/filter.pageSize);int page=Math.max(1,Math.min(pagesCount,integer(query.get("page"),1)));int start=(page-1)*filter.pageSize;
-      html=pages.details(data,filter,page,states(session,selected.subList(start,Math.min(start+filter.pageSize,selected.size()))));
+      html=pages.details(data,filter,page,states(session,selected.subList(start,Math.min(start+filter.pageSize,selected.size()))).editing(active,choose));
     }
     sendHtml(x,200,html);return true;
   }
   private BusinessWorkflowState states(AuthService.Session s,List<RowRef> rows){return BusinessWorkflowState.load(store.platform,s.actor,rows);}
   private void history(HttpExchange x,AuthService.Session session,Map<String,String> query)throws Exception{
-    BusinessRecord row=store.platform.find(session.actor,query.get("id"));int offset=integer(query.get("offset"),0);
-    List<Submission> history=store.platform.workflow().recordHistory(session.actor,row.id(),offset,25);var schema=DatasetSchema.get(row.dataset());
-    StringBuilder b=new StringBuilder(PageLayout.backButton("/")).append("<h1>记录追溯 · ").append(PageLayout.e(schema.value(row.values(),schema.customerColumn))).append("</h1><p>").append(PageLayout.e(Organizations.label(row.organizationId()))).append(" · ").append(PageLayout.e(row.period().key())).append(" · 正式版本 ").append(row.version()).append("</p><p class=\"business-note\">显示该记录关联的提交历史；私人草稿不公开。导入及字段修改详情沿用公共操作记录。</p><p><a class=\"btn btn-light\" href=\"/audit?category=business&amp;search=").append(PageLayout.u(row.id())).append("&amp;dataset=").append(PageLayout.u(row.dataset())).append("\">查看该记录的公共操作记录</a></p><div class=\"table-scroll\"><table class=\"data-table business-history-table\"><thead><tr><th>提交时间</th><th>提交人</th><th>处理状态</th><th>复核人</th><th>操作</th></tr></thead><tbody>");
-    for(var item:history)b.append("<tr><td>").append(PageLayout.e(PageLayout.time(item.createdAt().toString()))).append("</td><td>").append(PageLayout.e(item.ownerName())).append("</td><td>").append(item.state()==State.SUBMITTED?"待复核":item.state()==State.RETURNED?"已退回":item.mode()==Mode.DIRECT?"直接生效":"已通过").append("</td><td>").append(PageLayout.e(item.reviewerName())).append("</td><td><a href=\"/workflow/submission?id=").append(PageLayout.u(item.id())).append("\">提交详情</a> · <a href=\"/audit?submissionId=").append(PageLayout.u(item.id())).append("\">公共审计</a></td></tr>");
-    if(history.isEmpty())b.append("<tr><td colspan=\"5\">暂无工作流提交，导入历史请查看公共操作记录</td></tr>");
-    b.append("</tbody></table></div>").append(AccessPages.pager("/records/history?id="+PageLayout.u(row.id()),offset,history.size()));
-    sendHtml(x,200,new RiskPages(version,session).shell("记录追溯",b.toString()));
+    // Query the shared audit authority; never reconstruct purged audit details from snapshots.
+    Map<String,String> q=new HashMap<>(query);q.put("category","business");q.put("history","1");
+    ActorContext actor=session.actor;String org=q.getOrDefault("organization","").strip();
+    if(!org.isEmpty())org=Organizations.resolve(org);
+    if(!org.isEmpty())AccessPolicy.require(actor,AccessPolicy.Action.VIEW,org);
+    if(!AccessPolicy.all(actor))org=actor.organizationId();q.put("organization",org);
+    if(!q.getOrDefault("id","").isBlank()){
+      BusinessRecord row=store.platform.find(actor,q.get("id"));q.put("search",row.id());q.put("dataset",row.dataset());
+    }
+    String dataset=q.getOrDefault("dataset","").strip();if(!dataset.isEmpty())DatasetSchema.get(dataset);
+    LocalDate from=parseDate(q.get("from"),"开始日期"),through=parseDate(q.get("through"),"结束日期");
+    if(from!=null&&through!=null&&from.isAfter(through))throw new IllegalArgumentException("开始日期不能晚于结束日期");
+    int offset=Math.max(0,integer(q.get("offset"),0));
+    var filter=new AccessPlatform.AuditFilter("business",org,dataset,limit(q.get("search"),100),from,through);
+    var entries=store.platform.access().audit(actor,filter,offset,25);
+    sendHtml(x,200,new AuditPages(version,session).audit(entries,q,offset));
   }
+  private static LocalDate parseDate(String value,String label){if(value==null||value.isBlank())return null;try{return LocalDate.parse(value);}catch(Exception e){throw new IllegalArgumentException(label+"格式应为 YYYY-MM-DD");}}
 }

@@ -18,9 +18,41 @@ public final class WorkflowPlatformTest {
       draftsAndConfirmation(f);approvalAndNotifications(f);conflictsAndReturns(f);directAndQueries(f);
       rollback(f);concurrency(f);identityChanges(f);restart(f);
     }
-    migrations();
+    crossBranchAtomic();migrations();
     System.out.println("WORKFLOW_PLATFORM_OK assertions="+assertions+" real synthetic identities, concurrent requests, injected failures, restart and V1 upgrade");
   }
+  static void crossBranchAtomic()throws Exception{try(Fixture f=new Fixture()){
+    var w=f.record("WUJIN","multi");var j=f.record("JINTAN","multi");
+    var changes=List.of(edit(w,"ONLY-WUJIN"),edit(j,"ONLY-JINTAN"));
+    denied(()->f.w().previewDirect(f.branch,"multi",changes));denied(()->f.w().previewDirect(f.op,"multi",changes));denied(()->f.w().previewDirect(f.root,"multi",changes));
+    var preview=f.w().previewDirect(f.div,"multi",changes);String request=id();
+    check(preview.mode()==Mode.BATCH_DIRECT&&branchSnapshots(preview.rows()).size()==2,"explicit batch envelope carries two real branch sub-snapshots");
+    int audits=f.store.diagnostics().get("audit_events"),submissions=f.store.diagnostics().get("submissions");long notices=f.n().unreadCount(f.div),otherNotices=f.n().unreadCount(f.otherReview);
+    for(String point:List.of("official-row-written","notification-written","confirmation-complete")){
+      f.fail(point,point.equals("official-row-written")?2:1);
+      code(Code.TRANSACTION_FAILED,()->f.w().confirm(f.div,preview.id(),request));
+      check(f.store.find(f.div,w.id()).version()==1&&f.store.find(f.div,j.id()).version()==1,"multi-branch rollback includes every row: "+point);
+      check(f.store.diagnostics().get("audit_events")==audits&&f.store.diagnostics().get("submissions")==submissions&&f.n().unreadCount(f.div)==notices,"multi-branch audit/snapshot/notice rollback: "+point);
+    }
+    var results=race(()->f.w().confirm(f.div,preview.id(),request),()->f.w().confirm(f.div,preview.id(),request));
+    check(results.stream().allMatch(Submission.class::isInstance),"concurrent multi-branch same request safely replays");
+    var submitted=(Submission)results.get(0);check(((Submission)results.get(1)).id().equals(submitted.id()),"same multi-branch immutable batch id");
+    check(f.store.find(f.div,w.id()).version()==2&&f.store.find(f.div,j.id()).version()==2,"exactly once updates both branches");
+    check(f.n().unreadCount(f.div)==notices+1&&f.n().unreadCount(f.otherReview)==otherNotices,"multi-branch direct notice only to submitter");
+    for(var actor:List.of(f.op,f.branch,f.review,f.otherOp,f.otherReview)){
+      var clipped=f.w().submission(actor,submitted.id());check(clipped.rows().size()==1&&clipped.rows().get(0).before().organizationId().equals(actor.organizationId()),"mixed submission cropped to actual branch");
+      var filter=new AccessPlatform.AuditFilter("business",actor.organizationId(),"multi","",null,null);
+      check(f.store.access().auditForSubmission(actor,submitted.id(),filter,0,100).stream().allMatch(e->e.organization().equals(actor.organizationId())),"shared audit stays row scoped");
+      check(f.w().auditTrail(actor,submitted.id()).stream().allMatch(e->e.recordId().equals(actor.organizationId().equals("WUJIN")?w.id():j.id())),"workflow audit cannot leak other branch row or division summary");
+    }
+    var outsider=f.user(Role.OPERATOR,"LIYANG");denied(()->f.w().submission(outsider,submitted.id()));
+    check(f.w().submissions(outsider,Query.firstPage()).isEmpty(),"unrelated branch has no mixed-batch list entry");
+    var currentW=f.store.find(f.div,w.id());var currentJ=f.store.find(f.div,j.id());
+    var stale=f.w().previewDirect(f.div,"multi",List.of(edit(currentW,"NEXT-W"),edit(currentJ,"NEXT-J")));
+    f.w().confirm(f.branch,f.w().previewDirect(f.branch,"multi",List.of(edit(currentW,"OTHER-WRITER"))).id(),id());
+    code(Code.VERSION_CONFLICT,()->f.w().confirm(f.div,stale.id(),id()));
+    check(value(f.store.find(f.div,j.id())).equals("ONLY-JINTAN"),"one stale branch blocks entire batch, no partial second branch write");
+  }}
   static void draftsAndConfirmation(Fixture f)throws Exception {
     var r=f.record("WUJIN","multi");String privateText="PRIVATE_DRAFT_ONLY_测试字段";
     var change=edit(r,privateText);String request=id();
@@ -69,9 +101,8 @@ public final class WorkflowPlatformTest {
     check(f.w().confirm(f.op,preview.id(),request).id().equals(submitted.id()),"same confirm idempotent");
     check(f.w().confirm(f.op,preview.id(),id()).id().equals(submitted.id()),"same preview different request no duplicate");
     check(f.n().unreadCount(f.review)==notices+1,"repeat confirmation no duplicate notification");
-    f.w().saveDraft(f.op,d.id(),1,"negative",List.of(edit(r,"之后的私人草稿")),"",id());
-    check(f.w().submission(f.review,submitted.id()).rows().get(0).change().values().get("feedback").equals("原始提交"),"submitted snapshot immutable after draft edit");
-    var next=f.w().previewDraft(f.op,d.id(),2);code(Code.ALREADY_SUBMITTED,()->f.w().confirm(f.op,next.id(),id()));
+    code(Code.ALREADY_DECIDED,()->f.w().saveDraft(f.op,d.id(),1,"negative",List.of(edit(r,"之后的私人草稿")),"",id()));
+    check(f.w().submission(f.review,submitted.id()).rows().get(0).change().values().get("feedback").equals("原始提交")&&f.w().drafts(f.op,"negative",0,20).stream().noneMatch(item->item.id().equals(d.id())),"submitted snapshot immutable and draft leaves active list");
     check(!f.store.find(f.op,r.id()).complete(),"pending not complete");
     var notice=f.n().inbox(f.review,false,0,100).stream().filter(n->n.submissionId().equals(submitted.id())).findFirst().orElseThrow();
     denied(()->f.n().markRead(f.op2,notice.id()));f.n().markRead(f.review,notice.id());f.n().markRead(f.review,notice.id());
@@ -133,13 +164,15 @@ public final class WorkflowPlatformTest {
     BusinessRecord r=f.record("WUJIN","multi"),j=f.record("JINTAN","multi");
     denied(()->f.w().previewDirect(f.op,"multi",List.of(edit(r,"bad"))));denied(()->f.w().previewDirect(f.root,"multi",List.of(edit(r,"bad"))));
     denied(()->f.w().previewDirect(f.branch,"multi",List.of(edit(j,"bad"))));
-    code(Code.INVALID_INPUT,()->f.w().previewDirect(f.div,"multi",List.of(edit(r,"one"),edit(j,"two"))));
-    code(Code.INVALID_INPUT,()->f.w().previewDirect(f.div,"multi",List.of(edit(r,""))));
-    var direct=f.w().previewDirect(f.branch,"multi",List.of(edit(r,"initial")));
-    f.store.publishDirect(f.div,List.of(edit(r,"changed after preview")),id());
+    var crossPreview=f.w().previewDirect(f.div,"multi",List.of(edit(r,"one"),edit(j,"two")));
+    check(crossPreview.organizationId().equals(Organizations.DIVISION)&&crossPreview.rows().size()==2,"division direct preview spans selected branches");
+    var crossSubmission=f.w().confirm(f.div,crossPreview.id(),id());check(crossSubmission.mode()==Mode.BATCH_DIRECT,"cross-branch confirmation uses explicit immutable batch type, not an ordinary CZ submission");
+    var clearCross=f.w().previewDirect(f.div,"multi",List.of(edit(f.store.find(f.div,r.id()),"")));f.w().confirm(f.div,clearCross.id(),id());check(value(f.store.find(f.div,r.id())).isEmpty(),"division direct batch can clear a selected branch value");
+    var directBase=f.store.find(f.branch,r.id());var direct=f.w().previewDirect(f.branch,"multi",List.of(edit(directBase,"initial")));
+    f.store.publishDirect(f.div,List.of(edit(directBase,"changed after preview")),id());
     code(Code.VERSION_CONFLICT,()->f.w().confirm(f.branch,direct.id(),id()));
-    var inJ=f.save(f.otherOp,j,"JINTAN pending");f.w().confirm(f.otherOp,f.w().previewDraft(f.otherOp,inJ.id(),1).id(),id());
-    check(f.w().submissions(f.op,Query.firstPage()).stream().allMatch(s->s.organizationId().equals("WUJIN")),"submission list scope");
+    var inJ=f.save(f.otherOp,f.store.find(f.otherOp,j.id()),"JINTAN pending");f.w().confirm(f.otherOp,f.w().previewDraft(f.otherOp,inJ.id(),1).id(),id());
+    check(f.w().submissions(f.op,Query.firstPage()).stream().flatMap(s->s.rows().stream()).allMatch(row->row.before().organizationId().equals("WUJIN")),"submission list scope filters cross-branch snapshots");
     check(f.w().submissions(f.root,Query.firstPage()).stream().anyMatch(s->s.organizationId().equals("JINTAN")),"super sees all submitted data");
     denied(()->f.w().submissions(f.op,new Query(null,"JINTAN",null,null,null,false,0,20)));
     denied(()->f.w().pendingReviews(f.op,Query.firstPage()));

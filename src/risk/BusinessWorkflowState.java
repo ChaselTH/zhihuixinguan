@@ -6,7 +6,10 @@ import xinguan.platform.WorkflowContracts.*;
 final class BusinessWorkflowState {
   record RowState(Draft draft,boolean stale,Submission pending,Submission latest) {}
   private final Map<String,RowState> states;
-  BusinessWorkflowState(Map<String,RowState> states){this.states=Map.copyOf(states);}
+  final Draft editingDraft;final boolean chooseDraft;
+  BusinessWorkflowState(Map<String,RowState> states){this(states,null,false);}
+  private BusinessWorkflowState(Map<String,RowState> states,Draft draft,boolean choose){this.states=Map.copyOf(states);editingDraft=draft;chooseDraft=choose;}
+  BusinessWorkflowState editing(Draft draft,boolean choose){return new BusinessWorkflowState(states,draft,choose);}
   static BusinessWorkflowState empty(){return new BusinessWorkflowState(Map.of());}
   RowState get(String id){return states.getOrDefault(id,new RowState(null,false,null,null));}
   static BusinessWorkflowState load(PlatformStore store,ActorContext actor,Collection<RowRef> shown){

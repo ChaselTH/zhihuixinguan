@@ -105,7 +105,7 @@ final class WorkflowRoutes {
     String draftId=clean(query.get("draft"));
     if(!draftId.isEmpty()) {
       if(!draftMode)throw new SecurityException("只有操作员可以恢复私人草稿");
-      draft=workflow.draft(actor,draftId);
+      draft=workflow.editableDraft(actor,draftId);
       if(!draft.dataset().equals(dataset))throw new IllegalArgumentException("草稿与当前表种不一致");
     }
     String prior=clean(query.get("prior"));
@@ -113,6 +113,16 @@ final class WorkflowRoutes {
     verifyPrior(actor,prior,dataset);
     List<BusinessRecord> rows=organization.isEmpty()?List.of():new ArrayList<>(store.list(actor,dataset,from,through));
     if(!organization.isEmpty())rows.removeIf(row->!organization.equals(row.organizationId()));
+    // Restoring a private draft is a focused view: show only rows with actual
+    // saved differences. New rows are added from the unified business table.
+    if(draft!=null) {
+      List<BusinessRecord> draftRows=new ArrayList<>();
+      for(SnapshotRow savedRow:draft.rows()) {
+        BusinessRecord current=store.find(actor,savedRow.before().id());
+        if(current.dataset().equals(dataset)&&current.organizationId().equals(organization))draftRows.add(current);
+      }
+      rows=draftRows;
+    }
     String focus=clean(query.get("record"));
     if(!focus.isEmpty()){
       BusinessRecord target=store.find(actor,focus);
@@ -131,7 +141,7 @@ final class WorkflowRoutes {
     String dataset=required(form,"dataset");DatasetSchema.get(dataset);
     Draft old=null;String id=clean(form.get("draftId"));long version=number(form.get("draftVersion"),"草稿版本");
     if(!id.isEmpty())old=workflow.draft(session.actor,id);
-    List<RecordChange> pageChanges=pageChanges(session.actor,dataset,form);
+    List<RecordChange> pageChanges=pageChanges(session.actor,dataset,form,old);
     LinkedHashMap<String,RecordChange> complete=new LinkedHashMap<>();
     if(old!=null)for(SnapshotRow row:old.rows())complete.put(row.before().id(),row.change());
     for(RecordChange change:pageChanges)complete.put(change.recordId(),change);
@@ -140,7 +150,7 @@ final class WorkflowRoutes {
     Draft saved=workflow.saveDraft(session.actor,id,version,dataset,List.copyOf(complete.values()),prior,required(form,"requestId"));
     if("preview".equals(form.get("intent"))) {
       Preview preview=workflow.previewDraft(session.actor,saved.id(),saved.version());
-      send(x,200,pages.preview(preview,"草稿已保存，以下差异来自服务端；预览本身尚未创建待办。"));
+      send(x,200,pages.preview(preview,"草稿已保存，以下为本草稿全部差异（含其他分页／筛选范围）；预览尚未创建待办。",editUrl(form,saved.id(),"")));
       return;
     }
     HttpSupport.redirect(x,editUrl(form,saved.id(),"草稿已保存，版本 "+saved.version()+"；其他分页中的已保存修改仍保留。"));
@@ -154,15 +164,22 @@ final class WorkflowRoutes {
   }
 
   private List<RecordChange> pageChanges(ActorContext actor,String dataset,Map<String,String> form) {
-    int count=bounded(form.get("rows"),0,EDIT_PAGE_SIZE,"页面记录数");
-    if(count<1)throw new IllegalArgumentException("当前页没有可提交的记录");
+    return pageChanges(actor,dataset,form,null);
+  }
+  private List<RecordChange> pageChanges(ActorContext actor,String dataset,Map<String,String> form,Draft draft) {
+    int count=bounded(form.get("rows"),0,Math.max(EDIT_PAGE_SIZE,50),"页面记录数");
+    if(count<1&&draft==null)throw new IllegalArgumentException("当前页没有可提交的记录");
+    boolean sparse="differences".equals(form.get("fieldsMode"));
+    if(sparse&&draft==null)throw new IllegalArgumentException("差异编辑需要指定本人草稿");
     DatasetSchema schema=DatasetSchema.get(dataset);List<RecordChange> result=new ArrayList<>();Set<String> seen=new HashSet<>();
     for(int i=0;i<count;i++) {
       String id=required(form,"id"+i);if(!seen.add(id))throw new IllegalArgumentException("页面包含重复记录，请刷新后重试");
       BusinessRecord current=store.find(actor,id);
       if(!current.dataset().equals(dataset))throw new IllegalArgumentException("表种与记录不一致");
       long expected=number(form.get("version"+i),"记录版本");Map<String,String> values=new TreeMap<>();
+      SnapshotRow saved=sparse?draft.rows().stream().filter(row->row.before().id().equals(id)).findFirst().orElseThrow(()->new IllegalArgumentException("记录不属于当前草稿")):null;
       for(DatasetSchema.Field field:schema.fields)if(field.editable()) {
+        if(sparse&&!saved.change().values().containsKey(field.key()))continue;
         String key="value_"+i+"_"+field.key();if(!form.containsKey(key))throw new IllegalArgumentException("页面字段缺失，请刷新后重试");
         values.put(field.key(),form.get(key));
       }
@@ -225,9 +242,16 @@ final class WorkflowRoutes {
   private static String notice(Map<String,String> values) {return HttpSupport.limit(values.get("notice"),300);}
 
   private static String editUrl(Map<String,String> form,String draft,String notice) {
+    if("details".equals(form.get("view")))return detailsUrl(form,draft)+"&notice="+HttpSupport.url(notice);
     StringBuilder url=new StringBuilder("/workflow/edit?dataset=").append(HttpSupport.url(form.getOrDefault("dataset","multi")));
     for(String key:List.of("organization","from","through","page","record"))if(!clean(form.get(key)).isEmpty())url.append('&').append(key).append('=').append(HttpSupport.url(form.get(key)));
     url.append("&draft=").append(HttpSupport.url(draft)).append("&notice=").append(HttpSupport.url(notice));return url.toString();
+  }
+  static String detailsUrl(Map<String,String> form,String draft){
+    StringBuilder url=new StringBuilder("/details?dataset=").append(HttpSupport.url(form.getOrDefault("dataset","multi")));
+    for(String key:List.of("scope","month","year","quarter","start","end","branch","q","completion","period","pageSize","page"))
+      if(!clean(form.get(key)).isEmpty())url.append('&').append(key).append('=').append(HttpSupport.url(form.get(key)));
+    if(!clean(draft).isEmpty())url.append("&draft=").append(HttpSupport.url(draft));return url.toString();
   }
 
   private boolean workflowError(HttpExchange x,WorkflowPages pages,WorkflowException e)throws IOException {

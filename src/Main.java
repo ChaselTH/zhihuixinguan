@@ -120,7 +120,7 @@ public final class Main extends HttpSupport {
       changes.add(new RecordChange(old.id(),Long.parseLong(f.get("version"+i)),values));
     }
     var preview=store.platform.workflow().previewDirect(session.actor,schema.id,changes);
-    sendHtml(x,200,new WorkflowPages(version,session).preview(preview,"请核对本次修改后确认；正式数据尚未改变。"));
+    sendHtml(x,200,new WorkflowPages(version,session).preview(preview,"请核对本次修改后确认；正式数据尚未改变。",WorkflowRoutes.detailsUrl(f,"")));
   }
-  private void asset(HttpExchange x,String path)throws IOException{String name=path.substring(8);if(!Set.of("style.css","foundation.css","access.css","workflow.css","import.css","business.css","business.js","html5shiv.js","identity.js").contains(name)){text(x,404,"Not found","text/plain");return;}Path file=root.resolve("web/assets").resolve(name);byte[] bytes=Files.readAllBytes(file);security(x.getResponseHeaders());x.getResponseHeaders().set("Content-Type",name.endsWith(".css")?"text/css; charset=utf-8":"application/javascript; charset=utf-8");x.sendResponseHeaders(200,bytes.length);x.getResponseBody().write(bytes);}
+  private void asset(HttpExchange x,String path)throws IOException{String name=path.substring(8);if(!Set.of("style.css","foundation.css","access.css","workflow.css","workflow.js","import.css","business.css","business.js","html5shiv.js","identity.js").contains(name)){text(x,404,"Not found","text/plain");return;}Path file=root.resolve("web/assets").resolve(name);byte[] bytes=Files.readAllBytes(file);security(x.getResponseHeaders());x.getResponseHeaders().set("Content-Type",name.endsWith(".css")?"text/css; charset=utf-8":"application/javascript; charset=utf-8");x.sendResponseHeaders(200,bytes.length);x.getResponseBody().write(bytes);}
 }

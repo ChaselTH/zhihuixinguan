@@ -26,7 +26,7 @@ final class WorkflowIntegrationHttpTest {
     var saved=post("/workflow/draft/save",fields);check(saved.statusCode()==303,"private draft saved through real Main");
     String draftUrl=saved.headers().firstValue("location").orElseThrow();String editor=get(draftUrl).body();
     check(editor.contains("INTEGRATION_DRAFT_ONLY &lt;script&gt;"),"own draft restored and escaped");
-    check(!get("/details?dataset=negative&month=2026-09").body().contains("INTEGRATION_DRAFT_ONLY")&&!exportText("negative").contains("INTEGRATION_DRAFT_ONLY"),"draft excluded from official page and XLSX");
+    check(get("/details?dataset=negative&month=2026-09").body().contains("INTEGRATION_DRAFT_ONLY")&&!exportText("negative").contains("INTEGRATION_DRAFT_ONLY"),"owner can restore draft in unified table while official XLSX remains unchanged");
     use(peerClient);check(get(draftUrl).statusCode()==403,"same branch peer cannot read private draft");use(otherClient);check(get(draftUrl).statusCode()==403,"other branch cannot read private draft");
     use(root);check(get(draftUrl).statusCode()==403,"super cannot read private draft body");
     use(operator);fields=form(editor,"/workflow/draft/save");fields.put("intent","preview");
@@ -45,7 +45,7 @@ final class WorkflowIntegrationHttpTest {
     rejection.put("reason","补充 <核验> 内容");check(post("/workflow/review/reject",rejection).statusCode()==200,"reviewer returns through Main");
     check(!exportText("negative").contains("INTEGRATION_DRAFT_ONLY"),"returned snapshot excluded from export");
     use(operator);String returned=get("/workflow/submission?id="+first).body();String resume=unescape(match(returned,"href=\"([^\"]+)\">恢复草稿并修订"));
-    String resumed=get(resume).body();check(resumed.contains("name=\"prior\" value=\""+first+"\""),"filter retains returned submission lineage");
+    String resumed=get(resume).body();check(resumed.contains("name=\"priorSubmissionId\" value=\""+first+"\""),"difference editor retains returned submission lineage");
     fields=form(resumed,"/workflow/draft/save");fields.put("value_0_feedback","INTEGRATION_APPROVED <核验完成>");fields.put("intent","preview");
     String preview2=post("/workflow/draft/save",fields).body();String second=id(post("/workflow/confirm",form(preview2,"/workflow/confirm")).body());
     check(!second.equals(first)&&get("/workflow/submission?id="+second).body().contains(first),"resubmission creates new linked immutable record");
