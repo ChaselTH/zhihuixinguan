@@ -21,6 +21,8 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
   private final AccessPlatform access;
   private final ImportPlatform importing;
   private final FeedbackDeadlines deadlines;
+  private final MaintenancePlatform maintenance;
+  static final String ACTIVE_RECORD="NOT EXISTS (SELECT 1 FROM record_deletions deleted WHERE deleted.record_id=official_records.id)";
   private final java.util.function.Consumer<String> checkpoint;
   private final Path platformDir;
   private final Path initialPasswordKeyFile;
@@ -144,8 +146,10 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
     access=new AccessPlatform(this,db,workflow,clock,checkpoint);
     importing=new ImportPlatform(this,db,clock,checkpoint);
     deadlines=new FeedbackDeadlines(this,db,clock,checkpoint);
+    maintenance=new MaintenancePlatform(this,db,clock,checkpoint);
   }
   public FeedbackDeadlines deadlines(){return deadlines;}
+  public MaintenancePlatform maintenance(){return maintenance;}
   public ImportPlatform importing() { return importing; }
   public AccessPlatform access() { return access; }
   public WorkflowContracts.WorkflowService workflow() { return workflow; }
@@ -160,7 +164,7 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
   @Override public synchronized List<BusinessRecord> list(ActorContext actor,String dataset,LocalDate from,LocalDate through) {
     currentIdentity(actor);
     if(actor==null)throw new SecurityException("请先登录");
-    String sql="SELECT * FROM official_records WHERE 1=1";List<Object> args=new ArrayList<>();
+    String sql="SELECT * FROM official_records WHERE "+ACTIVE_RECORD;List<Object> args=new ArrayList<>();
     if(!AccessPolicy.all(actor)){sql+=" AND organization_id=?";args.add(actor.organizationId());}
     if(dataset!=null&&!dataset.isBlank()){DatasetSchema.get(dataset);sql+=" AND dataset=?";args.add(dataset);}
     if(from!=null){sql+=" AND period_end>=?";args.add(java.sql.Date.valueOf(from));}
@@ -234,7 +238,7 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
         if(!"bundle".equals(dataset)&&!dataset.equals(candidate.dataset())||candidate.values().size()!=schema.width()||!Organizations.BRANCHES.containsKey(candidate.organizationId()))throw new IllegalArgumentException("导入数据类型、机构或列数不正确");
         for(int i=0;i<schema.width();i++)if(schema.editable(i))schema.validateEdit(i,candidate.values().get(i));
         String fingerprint=fingerprint(candidate);boolean overwrite=replace.contains(fingerprint);BusinessRecord old=null;
-        try(PreparedStatement st=statement("SELECT * FROM official_records WHERE source_fingerprint=? FOR UPDATE",fingerprint);ResultSet rs=st.executeQuery()){
+        try(PreparedStatement st=statement("SELECT * FROM official_records WHERE source_fingerprint=? AND "+ACTIVE_RECORD+" FOR UPDATE",fingerprint);ResultSet rs=st.executeQuery()){
           if(rs.next())old=read(rs);if(rs.next())throw new IllegalArgumentException("存在多条相同历史来源记录，请先核对，未自动覆盖");
         }
         if(old==null) {
@@ -275,8 +279,9 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
   public synchronized List<AuditEvent> auditEvents(ActorContext actor,int limit) {
     currentIdentity(actor);
     if(actor==null)throw new SecurityException("请先登录");
-    String sql="SELECT * FROM audit_events";List<Object> args=new ArrayList<>();
-    if(!AccessPolicy.all(actor)){sql+=" WHERE organization_id=?";args.add(actor.organizationId());}
+    String sql="SELECT * FROM audit_events WHERE 1=1";List<Object> args=new ArrayList<>();
+    if(actor.role()!=Role.SUPER_ADMIN)sql+=" AND actor_role<>'SUPER_ADMIN'";
+    if(!AccessPolicy.all(actor)){sql+=" AND organization_id=?";args.add(actor.organizationId());}
     sql+=" ORDER BY event_at DESC LIMIT ?";args.add(Math.max(1,Math.min(limit,200)));
     try(PreparedStatement st=statement(sql,args.toArray());ResultSet rs=st.executeQuery()){
       List<AuditEvent> events=new ArrayList<>();while(rs.next())events.add(new AuditEvent(rs.getString("event_at"),rs.getString("actor_name"),rs.getString("organization_id"),rs.getString("action"),rs.getString("record_id"),rs.getString("request_id"),rs.getString("before_data"),rs.getString("after_data")));return events;
@@ -284,8 +289,8 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
   }
   public synchronized Map<String,Integer> diagnostics() {
     LinkedHashMap<String,Integer> result=new LinkedHashMap<>();
-    for(String table:List.of("official_records","migration_items","audit_events","users","drafts","submissions"))try(Statement st=db.createStatement();ResultSet rs=st.executeQuery("SELECT COUNT(*) FROM "+table)){rs.next();result.put(table,rs.getInt(1));}catch(SQLException e){throw failure(e);}
-    try(PreparedStatement st=statement("SELECT COUNT(*) FROM official_records WHERE organization_id=?",Organizations.UNASSIGNED);ResultSet rs=st.executeQuery()){rs.next();result.put("unassigned_records",rs.getInt(1));}catch(SQLException e){throw failure(e);}
+    for(String table:List.of("official_records","migration_items","audit_events","users","drafts","submissions"))try(Statement st=db.createStatement();ResultSet rs=st.executeQuery("SELECT COUNT(*) FROM "+table+(table.equals("official_records")?" WHERE "+ACTIVE_RECORD:""))){rs.next();result.put(table,rs.getInt(1));}catch(SQLException e){throw failure(e);}
+    try(PreparedStatement st=statement("SELECT COUNT(*) FROM official_records WHERE organization_id=? AND "+ACTIVE_RECORD,Organizations.UNASSIGNED);ResultSet rs=st.executeQuery()){rs.next();result.put("unassigned_records",rs.getInt(1));}catch(SQLException e){throw failure(e);}
     return result;
   }
   public static String fingerprint(BusinessRecord r) {
@@ -298,7 +303,7 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
     exec("INSERT INTO official_records VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",id,1L,r.dataset(),r.period().key(),java.sql.Date.valueOf(r.period().start()),java.sql.Date.valueOf(r.period().end()),r.organizationId(),fingerprint(r),Codec.encode(r.values()),r.filename(),r.importedAt(),r.updatedAt(),Codec.encode(extras));
   }
   private BusinessRecord load(String id,boolean lock)throws SQLException{
-    try(PreparedStatement st=statement("SELECT * FROM official_records WHERE id=?"+(lock?" FOR UPDATE":""),id);ResultSet rs=st.executeQuery()){return rs.next()?read(rs):null;}
+    try(PreparedStatement st=statement("SELECT * FROM official_records WHERE id=? AND "+ACTIVE_RECORD+(lock?" FOR UPDATE":""),id);ResultSet rs=st.executeQuery()){return rs.next()?read(rs):null;}
   }
   private BusinessRecord read(ResultSet rs)throws SQLException {
     Map<String,String> extras=new LinkedHashMap<>();String raw=rs.getString("legacy_extras");if(!raw.isEmpty()){List<String> a=Codec.decode(raw);for(int i=0;i+1<a.size();i+=2)extras.put(a.get(i),a.get(i+1));}

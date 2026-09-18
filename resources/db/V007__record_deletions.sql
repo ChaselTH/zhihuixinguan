@@ -1,0 +1,1 @@
+CREATE TABLE record_deletions (record_id VARCHAR(80) PRIMARY KEY REFERENCES official_records(id), deleted_by VARCHAR(80) NOT NULL REFERENCES users(id), deleted_at VARCHAR(40) NOT NULL, request_id VARCHAR(100) NOT NULL);

@@ -41,7 +41,7 @@ final class ImportHttpTest {
     check(post("/imports/confirm",Map.of("csrf",csrf(),"token",cancelled,"revision","1","mode","saved")).statusCode()==409,"cancelled task cannot publish");
     String audit=get("/audit?category=business&search="+token).body();check(audit.contains("IMPORT_CONFIRM")||audit.contains("导入确认"),"confirmation decisions in shared authorized audit");
     use(branch);check(!get("/audit?category=business&search="+token).body().contains("SKIP"),"branch audit cannot see other branch import decisions");
-    use(division);check(get("/foundation").body().contains("数据库结构：6"),"diagnostic page reflects actual migrated schema");
+    use(division);check(get("/foundation").body().contains("数据库结构：7"),"diagnostic page reflects actual migrated schema");
     var unified=uploadBundle(bundleWorkbook(),"unified.xlsx",csrf());check(unified.statusCode()==200&&unified.body().contains("交叉违约清单")&&!unified.body().contains("identity-card import-item"),"unified upload stages one compact three-sheet preview");String unifiedToken=HttpSmokeTest.hidden(unified.body()).get("token");check(unifiedToken!=null&&get("/imports/preview?token="+unifiedToken+"&details=yes").body().contains("bundle-negative"),"unified preview can expand source details on demand");check(!unified.body().contains("保存整批决定")&&!unified.body().contains("全部跳过")&&!unified.body().contains("type=\"checkbox\""),"simplified import has one mode selector without redundant save or checkboxes");
     Map<String,String> bulk=new HashMap<>(Map.of("csrf",csrf(),"token",unifiedToken,"mode","preserve","revision","1"));
     check(post("/imports/confirm-bulk",bulk).statusCode()==200,"no-JavaScript fallback asks for confirmation without writing");

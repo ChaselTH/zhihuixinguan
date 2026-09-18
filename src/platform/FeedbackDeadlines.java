@@ -18,7 +18,7 @@ public final class FeedbackDeadlines {
   }
   public Map<Key,Setting> visible(ActorContext actor){
     return store.workflowTransaction(actor,()->{
-      String sql="SELECT d.* FROM feedback_deadlines d WHERE EXISTS (SELECT 1 FROM official_records r WHERE r.dataset=d.dataset AND r.period_key=d.period_key";
+      String sql="SELECT d.* FROM feedback_deadlines d WHERE EXISTS (SELECT 1 FROM official_records r WHERE NOT EXISTS (SELECT 1 FROM record_deletions deleted WHERE deleted.record_id=r.id) AND r.dataset=d.dataset AND r.period_key=d.period_key";
       if(!AccessPolicy.all(actor))sql+=" AND r.organization_id=?";
       sql+=")";
       Map<Key,Setting> result=new LinkedHashMap<>();
@@ -37,7 +37,7 @@ public final class FeedbackDeadlines {
       LocalDate due=parseDate(date);
       LocalDate today=clock.instant().atZone(FeedbackTiming.ZONE).toLocalDate();
       if(due!=null&&!due.isAfter(today))throw new IllegalArgumentException("反馈截止日期只能设置为北京时间今天之后的日期，最早为 "+today.plusDays(1));
-      try(var st=db.prepareStatement("SELECT COUNT(*) FROM official_records WHERE dataset=? AND period_key=?")){
+      try(var st=db.prepareStatement("SELECT COUNT(*) FROM official_records WHERE dataset=? AND period_key=? AND "+PlatformStore.ACTIVE_RECORD)){
         st.setString(1,dataset);st.setString(2,period);try(var rs=st.executeQuery()){rs.next();if(rs.getInt(1)==0)throw new IllegalArgumentException("该清单期次不存在，请先导入数据");}
       }
       Setting previous=null;

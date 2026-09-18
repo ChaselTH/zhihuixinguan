@@ -144,7 +144,7 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
   @Override public List<AuditEntry> auditTrail(ActorContext a,String submissionId) {
     return call(a,()->{
       Submission submission=loadSubmission(a,submissionId);List<AuditEntry> result=new ArrayList<>();
-      String sql="SELECT e.* FROM audit_events e JOIN workflow_audit_links l ON l.event_id=e.id WHERE e.organization_id=? AND l.submission_id=? ORDER BY e.event_at,e.id";
+      String sql="SELECT e.* FROM audit_events e JOIN workflow_audit_links l ON l.event_id=e.id WHERE e.organization_id=? AND l.submission_id=?"+(a.role()==Role.SUPER_ADMIN?"":" AND e.actor_role<>'SUPER_ADMIN'")+" ORDER BY e.event_at,e.id";
       try(PreparedStatement st=statement(sql,submission.organizationId(),submissionId);ResultSet rs=st.executeQuery()) {
         while(rs.next())result.add(new AuditEntry(rs.getString("id"),Instant.parse(rs.getString("event_at")),rs.getString("actor_id"),rs.getString("actor_name"),rs.getString("actor_role"),rs.getString("record_id"),rs.getString("action"),rs.getString("request_id"),rs.getString("before_data"),rs.getString("after_data"),rs.getString("details")));
       }
