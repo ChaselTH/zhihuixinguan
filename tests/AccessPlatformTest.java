@@ -90,7 +90,7 @@ public final class AccessPlatformTest {
     check(p.audit(f.branch,new AccessPlatform.AuditFilter("business","","",pending.id(),null,null),0,100).stream().anyMatch(e->e.submissionId().equals(pending.id())),"workflow audit linked without duplicating writes");
     expect(IllegalArgumentException.class,()->p.audit(f.root,new AccessPlatform.AuditFilter("business","","","",LocalDate.of(2026,10,1),LocalDate.of(2026,9,1)),0,25));
     check(p.audit(f.root,new AccessPlatform.AuditFilter("business","","","",LocalDate.of(2099,1,1),null),0,25).isEmpty(),"date filtering");
-    check(p.audit(f.branch,filter("security"),0,100).stream().allMatch(e->e.actor().equals(f.branch.name())),"branch administrative audit only own management operations");
+    check(p.audit(f.branch,filter("security"),0,100).stream().allMatch(e->e.organization().equals("WUJIN")&&!e.actor().equals(f.root.name())),"branch administrative audit includes only own branch and hides super operations");
     expect(IllegalArgumentException.class,()->p.applications(f.root,true,-1,25));expect(IllegalArgumentException.class,()->p.audit(f.root,filter("business"),0,101));
   }
   static void migrationV2()throws Exception {
@@ -103,7 +103,7 @@ public final class AccessPlatformTest {
       }
       st.execute("INSERT INTO access_requests VALUES('old-application','880000001','虚构旧申请','WUJIN','PENDING','2026-09-01T00:00:00Z',NULL,NULL)");
     }
-    try(PlatformStore store=new PlatformStore(dir)){String password=id();store.bootstrapSuperAdmin("880000002",password);var actor=store.authenticateUser("880000002",password).actor();check(store.schemaVersion()==6,"V2 upgrades to V6");check(store.access().applications(actor,true,0,25).get(0).number().equals("880000001"),"preallocated application data preserved");expect(IllegalArgumentException.class,()->store.access().apply("880000001","重复旧申请","JINTAN",Role.OPERATOR));check(store.access().applications(actor,true,0,25).size()==1,"V2 pending numbers backfilled");}
+    try(PlatformStore store=new PlatformStore(dir)){String password=id();store.bootstrapSuperAdmin("880000002",password);var actor=store.authenticateUser("880000002",password).actor();check(store.schemaVersion()==7,"V2 upgrades to V7");check(store.access().applications(actor,true,0,25).get(0).number().equals("880000001"),"preallocated application data preserved");expect(IllegalArgumentException.class,()->store.access().apply("880000001","重复旧申请","JINTAN",Role.OPERATOR));check(store.access().applications(actor,true,0,25).size()==1,"V2 pending numbers backfilled");}
     Path failed=Files.createTempDirectory("xinguan-a1-failed-upgrade-");expect(java.io.IOException.class,()->{try(var ignored=new PlatformStore(failed,Clock.systemUTC(),point->{if(point.equals("migration-3-step-2"))throw new IllegalStateException("synthetic fault");})) {throw new AssertionError("fault missing");}});
     expect(java.io.IOException.class,()->{try(var ignored=new PlatformStore(failed)) {throw new AssertionError("partial migration accepted");}});
   }
