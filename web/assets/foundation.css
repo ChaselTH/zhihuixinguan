@@ -38,3 +38,10 @@
 .deadline-form{margin-bottom:10px;white-space:normal}
 .deadline-form label{display:inline-block}
 .deadline-form input{width:150px;padding:8px;border:1px solid #bac9d7;font-size:14px}
+.people-actions{min-width:390px;white-space:normal}
+.people-actions>a,.people-actions>form{margin-right:12px}
+.btn-delete-person{background:#fff1f0;color:#a82f2f;border:1px solid #d98f89}
+.btn-delete-person:hover{background:#fce1df;color:#8f2323}
+.people-actions .btn-delete-person{padding:6px 12px;font-size:14px;margin-top:4px;margin-bottom:4px}
+.person-delete-summary dt{font-size:13px;color:#647286;margin-top:12px}
+.person-delete-summary dd{margin:3px 0 14px;font-size:17px;word-wrap:break-word}

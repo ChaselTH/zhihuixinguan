@@ -1,5 +1,7 @@
 # PR0 公共基础与后续双 AI 交接约定
 
+2026-09-18 rc.6：人员列表中可管理的有效账号新增 `/people/delete?id=...` 入口，GET 只读确认页通过 `managedUser` 检查管理范围。确认复用 `POST /people/disable`，必须提交 CSRF、账号 revision、confirmDisable=yes；保留现有身份撤销、审计、责任保护和历史记录。成功跳转 `/people?deleted=yes` 显示停用说明，不新增平台写接口或迁移。
+
 2026-09-17 rc.5：`FeedbackDeadlines.save` 非空日期必须严格晚于服务端时钟的北京时间今天，今天和过去日期返回 400 且不写配置／审计；空值取消不受限制，读取旧到期日期不拒绝。无新迁移。增加 `PlatformStore(Path, Clock)` 与页面 DataStore 的受控时钟构造以验证时间流逝，不提供 HTTP 修改时钟的入口。
 
 2026-09-17 rc.4 最新补充：schema 6 新增 `feedback_deadlines`，不修改 V001～V005；通过 `PlatformStore.deadlines()` 读写，主键为清单＋来源期次，乐观版本和配置／审计同事务。`GET /deadlines` 按机构隔离；`POST /deadlines/save` 仅超级／分行管理员且要求 CSRF。北京时间截止当天包含在期限内；只依据正式完成状态判超期，草稿／待复核不计。业务筛选／导出支持 `completion=overdue` 与精确 `period`。详见 [rc.4 契约和验证](rc4-反馈截止日期.md)。

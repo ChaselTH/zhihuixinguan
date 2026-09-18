@@ -61,7 +61,8 @@ public final class Main extends HttpSupport {
         if(path.equals("/login")){redirect(x,"/");return;}
         if(path.equals("/account/password")){if(auth.passwordChangeExpired(session)){passwordRelogin(x);return;}sendHtml(x,200,identity.password(""));return;}
         if(path.startsWith("/people")){if(!PlatformStore.isManager(session.actor))throw new SecurityException("没有人员管理权限");
-          if(path.equals("/people")){sendHtml(x,200,identity.people(store.platform.listUsers(session.actor),""));return;}
+          if(path.equals("/people")){sendHtml(x,200,identity.people(store.platform.listUsers(session.actor),"yes".equals(q.get("deleted"))?"人员已删除（账号已停用），历史记录保留。":""));return;}
+          if(path.equals("/people/delete")){sendHtml(x,200,identity.deleteConfirmation(store.platform.managedUser(session.actor,q.get("id"))));return;}
           if(path.equals("/people/new")){sendHtml(x,200,identity.userForm(null,Map.of(),""));return;}
           if(path.equals("/people/edit")){sendHtml(x,200,identity.userForm(store.platform.managedUser(session.actor,q.get("id")),Map.of(),""));return;}
         }
@@ -84,7 +85,7 @@ public final class Main extends HttpSupport {
           case "/people/update" -> {UserAccount old=store.platform.managedUser(session.actor,f.get("id"));try{store.platform.updateUser(session.actor,old.id(),Long.parseLong(f.get("revision")),f.get("name"),Role.valueOf(f.getOrDefault("role","")),userOrganization(f),"true".equals(f.get("active")));}catch(IllegalArgumentException e){sendHtml(x,400,identity.userForm(old,f,e.getMessage()));return;}redirect(x,"/people");return;}
           case "/people/reset-password" -> {if(!"yes".equals(f.get("confirmReset")))throw new IllegalArgumentException("请先勾选重置密码确认");sendHtml(x,200,identity.created(store.platform.resetUserPassword(session.actor,f.get("id"),Long.parseLong(f.get("revision")))));return;}
           case "/people/initial-password" -> {UserAccount user=store.platform.managedUser(session.actor,f.get("id"));sendHtml(x,200,identity.initialPassword(user,store.platform.initialPassword(session.actor,user.id())));return;}
-          case "/people/disable" -> {if(!"yes".equals(f.get("confirmDisable")))throw new IllegalArgumentException("请先勾选停用确认");UserAccount old=store.platform.managedUser(session.actor,f.get("id"));store.platform.updateUser(session.actor,old.id(),Long.parseLong(f.get("revision")),old.name(),old.role(),old.organizationId(),false);redirect(x,"/people");return;}
+          case "/people/disable" -> {if(!"yes".equals(f.get("confirmDisable")))throw new IllegalArgumentException("请先确认删除（停用）该人员");UserAccount old=store.platform.managedUser(session.actor,f.get("id"));store.platform.updateUser(session.actor,old.id(),Long.parseLong(f.get("revision")),old.name(),old.role(),old.organizationId(),false);redirect(x,"/people?deleted=yes");return;}
           case "/update-batch" -> {save(x,session,f);return;}
           default -> {}
         }

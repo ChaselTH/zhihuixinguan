@@ -106,6 +106,7 @@ public final class HttpSmokeTest {
       ImportHttpTest.run(superClient,divisionClient,branchClient,operatorClient,reviewerClient);
       BusinessHttpTest.run(superClient,divisionClient,branchClient,operatorClient,reviewerClient);
       FeedbackHttpTest.run(superClient,divisionClient,branchClient,operatorClient,reviewerClient);
+      PeopleDeleteHttpTest.run(superClient,divisionClient,branchClient,operatorClient,reviewerClient);
       client=superClient;
       Map<String,String> editReviewer=hidden(get("/people/edit?id="+reviewer.id()).body());editReviewer.put("name","已转金坛");editReviewer.put("role","OPERATOR");editReviewer.put("organization","JINTAN");editReviewer.put("active","true");
       check(post("/people/update",editReviewer).statusCode()==303,"super changes role and organization");
