@@ -99,7 +99,7 @@ final class RiskPages extends PageLayout {
     if(session.actor.role()==Role.OPERATOR)b.append("<p class=\"business-note\">黄色列展示正式值；点击每条记录的“填写并提交”或“继续我的草稿”进入私人填报。</p>");
     b.append("<div class=\"table-scroll\"><table class=\"data-table detail-table\"><thead><tr><th class=\"business-status\">正式状态／流程入口</th>");
     for(var field:schema.fields)b.append("<th class=\"").append(field.editable()?"editable-head ":"").append(width(field)).append("\">").append(e(field.title())).append("</th>");
-    b.append("<th>期次／历史保留信息</th></tr></thead><tbody>");
+    b.append("</tr></thead><tbody>");
     for(int i=0;i<rows.size();i++){RowRef row=rows.get(i);b.append("<tr class=\"").append(row.rowClass()).append("\"><td class=\"business-status\">").append(cells.status(row,states)).append("<div class=\"business-actions\">").append(cells.actions(row,states,range)).append("</div></td>");
       for(int c=0;c<schema.width();c++){var field=schema.fields.get(c);String value=schema.value(row.values,c);b.append("<td class=\"").append(field.editable()?"editable-cell ":"").append(width(field)).append("\">");
         if(c==0)b.append(hidden("id"+i,row.record.id)).append(hidden("version"+i,""+row.record.versions.get(row.rowIndex)));
@@ -107,9 +107,9 @@ final class RiskPages extends PageLayout {
           else{b.append("<select name=\"").append(name).append("\">").append(option("","请选择",value));if(!value.isBlank()&&!field.options().contains(value))b.append(option(value,value+"（历史值）",value));for(String option:field.options())b.append(option(option,option,value));b.append("</select>");}}
         else b.append(e(value));b.append("</td>");
       }
-      b.append("<td class=\"col-long\">").append(e(row.record.period));for(var entry:row.record.legacyExtras.entrySet())b.append("<br>").append(e(entry.getKey())).append("：").append(e(entry.getValue()));b.append("</td></tr>");
+      b.append("</tr>");
     }
-    if(rows.isEmpty())b.append("<tr><td colspan=\"").append(schema.width()+2).append("\" class=\"table-empty\">当前筛选无记录，请调整时间、机构、状态或搜索条件</td></tr>");
+    if(rows.isEmpty())b.append("<tr><td colspan=\"").append(schema.width()+1).append("\" class=\"table-empty\">当前筛选无记录，请调整时间、机构、状态或搜索条件</td></tr>");
     return b.append("</tbody></table></div></form>").toString();
   }
   static String width(DatasetSchema.Field field){return field.key().contains("feedback")||field.key().equals("control_measures")||field.key().equals("warning_detail")?"col-feedback":field.title().length()>18?"col-long":"col-standard";}

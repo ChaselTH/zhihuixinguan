@@ -21,8 +21,7 @@ final class WorkbookImporter {
     DatasetSchema schema=DatasetSchema.get(dataset);
     filename=sanitize(filename);List<Issue> errors=new ArrayList<>();List<ImportPlatform.SourceRow> result=new ArrayList<>();int skipped=0;
     if(!filename.toLowerCase(Locale.ROOT).matches(".*\\.(et|xls|xlsx)$"))return new Report(List.of(),0,List.of(new Issue(filename,"",0,"","仅支持 .et、.xls、.xlsx")));
-    String contextConflict=dataset.equals("cross")?"":contextConflict(month,periodOverride);if(!contextConflict.isEmpty())return new Report(List.of(),0,List.of(new Issue(filename,"",0,"上传期次／月份",contextConflict)));
-    String suppliedMonth=cleanMonth(month),fileMonth=filenameMonth(filename),filePeriod=filenamePeriod(filename);
+    // Legacy upload arguments are deliberately ignored: only template row dates determine grouping.
     try(InputStream in=new ByteArrayInputStream(bytes);Workbook workbook=WorkbookFactory.create(in)) {
       DataFormatter formatter=new DataFormatter(Locale.CHINA);Sheet selected=null;int start=0;
       for(Sheet sheet:workbook){int candidate=findHeader(sheet,schema,formatter);if(candidate>=0){if(selected!=null)throw new WorkbookImportException("文件中有多张匹配工作表，请只保留一张 "+schema.label);selected=sheet;start=candidate;}}
@@ -50,17 +49,9 @@ final class WorkbookImporter {
             column=11;String date=firstDefaultDate(row.getCell(11),values.get(11),workbook);
             values.set(11,date);p=xinguan.platform.Period.parse(date.substring(0,7),"");
           }else{
-          String periodValue=schema.value(values,schema.periodColumn);if(periodValue.isBlank()){
-            if(periodOverride!=null&&!periodOverride.isBlank()){
-              String overrideMonth=periodMonth(periodOverride);if(!overrideMonth.isEmpty()&&!fileMonth.isEmpty()&&!overrideMonth.equals(fileMonth))throw new IllegalArgumentException("补充期次与文件名月份冲突，请按文件分别补充期次或清空公共期次");
-              periodValue=periodOverride;
-            }else if(!filePeriod.isEmpty()){
-              if(!suppliedMonth.isEmpty()&&!suppliedMonth.equals(fileMonth))throw new IllegalArgumentException("公共月份与文件名月份冲突，请按文件分别指定月份；本批未导入");
-              periodValue=filePeriod;
-            }else if(!suppliedMonth.isEmpty()&&!fileMonth.isEmpty()&&!suppliedMonth.equals(fileMonth))throw new IllegalArgumentException("公共月份与文件名月份冲突，请按文件分别指定月份；本批未导入");
-          }
-          String resolvedMonth=suppliedMonth.isEmpty()?fileMonth:suppliedMonth;
-          p=xinguan.platform.Period.parse(periodValue,resolvedMonth);
+            String periodValue=schema.value(values,schema.periodColumn);
+            try{p=xinguan.platform.Period.parse(periodValue,"");}
+            catch(IllegalArgumentException|java.time.DateTimeException e){throw new IllegalArgumentException("时间顺序必填且必须是有效月份或起止日期，例如 2026-09 或 20260901-20260915；不从文件名或上传参数推算");}
           }
           if(schema.periodColumn>=0)values.set(schema.periodColumn,p.key());
           for(int c=0;c<schema.width();c++)if(schema.editable(c)){column=c;schema.validateEdit(c,values.get(c));}
@@ -73,7 +64,6 @@ final class WorkbookImporter {
   }
   /** Parse one workbook against every supported data sheet; errors in any sheet reject the whole batch. */
   Report inspectBundle(byte[] bytes,String filename,String month,String periodOverride) {
-    String contextConflict=contextConflict(month,periodOverride);if(!contextConflict.isEmpty())return new Report(List.of(),0,List.of(new Issue(sanitize(filename),"",0,"上传期次／月份",contextConflict)));
     List<ImportPlatform.SourceRow> sources=new ArrayList<>();List<Issue> errors=new ArrayList<>();int skipped=0;
     for(DatasetSchema schema:DatasetSchema.all()){
       Report report=inspect(bytes,filename,month,periodOverride,schema.id);sources.addAll(report.sources());skipped+=report.skippedExamples();errors.addAll(report.errors());
@@ -141,17 +131,6 @@ final class WorkbookImporter {
       if(date.getYear()<2000||date.getYear()>2099)throw new IllegalArgumentException();
       return date.toString();
     }catch(RuntimeException e){throw new IllegalArgumentException("违约首次出现时间必填且必须是有效日期，例如 2026-09-17；将按该日期所属月份归档");}
-  }
-  private static String filenameMonth(String name){Matcher m=Pattern.compile("(20\\d{2})[-_年]?(0[1-9]|1[0-2])").matcher(name);return m.find()?m.group(1)+"-"+m.group(2):"";}
-  private static String filenamePeriod(String name){Matcher m=Pattern.compile("20\\d{2}[-.]?\\d{2}[-.]?\\d{2}\\s*[-~～至到_]\\s*20\\d{2}[-.]?\\d{2}[-.]?\\d{2}").matcher(name);return m.find()?m.group():"";}
-  private static String cleanMonth(String value){return value==null?"":value.strip();}
-  private static String periodMonth(String value){
-    String text=cleanMonth(value);Matcher range=Pattern.compile("(20\\d{2})[-./]?(\\d{2})[-./]?\\d{2}\\s*[-~～至到_]\\s*20\\d{2}[-./]?\\d{2}[-./]?\\d{2}").matcher(text);
-    if(range.matches())return range.group(1)+"-"+range.group(2);
-    return text.matches("20\\d{2}-(0[1-9]|1[0-2])(?:-P[12])?")?text.substring(0,7):"";
-  }
-  private static String contextConflict(String month,String periodOverride){
-    String m=cleanMonth(month),p=periodMonth(periodOverride);if(!m.isEmpty()&&!p.isEmpty()&&!m.equals(p))return "所属月份与补充期次冲突，请只保留一个一致的公共期次或按文件／行补充";return "";
   }
   static String sanitize(String name){String s=name.replace('\\','/');s=s.substring(s.lastIndexOf('/')+1).replaceAll("[\\r\\n\\t]"," ");return s.length()>180?s.substring(s.length()-180):s;}
 }

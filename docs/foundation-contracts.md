@@ -1,5 +1,7 @@
 # PR0 公共基础与后续双 AI 交接约定
 
+2026-09-18 rc.8：三类明细删除额外元数据列；WorkbookImporter 的旧 month/periodOverride 参数仅为签名兼容保留，不参与解析。multi/negative 必须使用每行“时间顺序”，cross 使用“违约首次出现时间”；不从文件名补值，缺失／无效整批拒绝。schema 7 不变，历史数据不自动清除或重写，见 [rc.8 说明](rc8-模板时间分期.md)。
+
 2026-09-18 rc.7：schema 7 新增 record_deletions，原迁移不改；PlatformStore.maintenance() 提供超管审计清理及分行管理员按月份删除的只读预览／确认，列表和导出统一排除已删除正式行。所有非超管的审计读取排除事件 actor_role=SUPER_ADMIN；支行账号审计改为本支行全部非超管操作。权限、签名、回滚和兼容说明见 [rc.7 契约](rc7-操作记录与月份删除.md)。
 
 2026-09-18 rc.6：人员列表中可管理的有效账号新增 `/people/delete?id=...` 入口，GET 只读确认页通过 `managedUser` 检查管理范围。确认复用 `POST /people/disable`，必须提交 CSRF、账号 revision、confirmDisable=yes；保留现有身份撤销、审计、责任保护和历史记录。成功跳转 `/people?deleted=yes` 显示停用说明，不新增平台写接口或迁移。

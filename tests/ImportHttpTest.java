@@ -64,7 +64,44 @@ final class ImportHttpTest {
     }
     check(uploadBundleFiles(List.of(invalidDate),List.of("2026-09.xlsx"),csrf(),null).statusCode()==400,"invalid cross date rejects whole workbook");
     check(!get("/details?dataset=multi&q=bad-date-bundle&month=2026-09").body().contains("虚构测试企业 bad-date-bundle"),"invalid cross date cannot partially import other sheets");
+    sourceDates();
     System.out.println("IMPORT_HTTP_OK assertions="+assertions+" real Main forms, bulk errors, private staging, choices, confirm, cancellation and audit");
+  }
+  static void sourceDates()throws Exception{
+    Map<String,String> months=Map.of("multi","2025-01","negative","2025-02","cross","2025-03");
+    Map<String,String> dates=Map.of("multi","20250101-20250115","negative","20250216-20250228","cross","2025-03-04");
+    byte[] file;
+    try(Workbook wb=WorkbookFactory.create(new ByteArrayInputStream(bundleWorkbook("20250901-20250915","RC8-DATES")))){
+      for(var schema:DatasetSchema.all())wb.getSheet(schema.label).getRow(schema.headerRows).getCell(schema.periodColumn<0?11:schema.periodColumn).setCellValue(dates.get(schema.id));
+      ByteArrayOutputStream out=new ByteArrayOutputStream();wb.write(out);file=out.toByteArray();
+    }
+    var response=uploadBundleFiles(List.of(file),List.of("20301201-20301215.xlsx"),csrf(),"2031-01");
+    check(response.statusCode()==200&&response.body().contains("新增 3 条"),"three sheets with different source dates stage independently of filename");
+    String token=HttpSmokeTest.hidden(response.body()).get("token");check(post("/imports/confirm-bulk",Map.of("csrf",csrf(),"token",token,"revision","1","mode","preserve","confirmed","yes")).statusCode()==303,"source-dated workbook committed");
+    for(var schema:DatasetSchema.all()){
+      String month=months.get(schema.id),key="RC8-DATES-"+schema.id,period=schema.periodColumn<0?month:Period.parse(dates.get(schema.id),"").key();
+      for(String selected:months.values()){
+        String html=get("/details?dataset="+schema.id+"&month="+selected+"&q="+key).body();
+        check(html.contains("虚构测试企业 "+key)==selected.equals(month),"source field decides each monthly detail: "+schema.id+selected);
+        check(!html.contains("期次／历史保留信息"),"no extra metadata column in any detail");
+      }
+      String yearly=get("/details?dataset="+schema.id+"&scope=year&year=2025&q="+key).body();check(yearly.contains("虚构测试企业 "+key),"year grouping agrees with row dates");
+      var export=exportBytes("/export?dataset="+schema.id+"&month="+month+"&q="+key);check(export.statusCode()==200,"source month export authorized");
+      try(Workbook wb=WorkbookFactory.create(new ByteArrayInputStream(export.body()))){
+        Sheet sh=wb.getSheetAt(0);Row row=sh.getRow(schema.headerRows);
+        check(sh.getLastRowNum()==schema.headerRows&&row.getLastCellNum()==schema.width()&&row.getCell(schema.customerColumn).getStringCellValue().contains(key),"export has matching row and exact template width");
+      }
+      String deadlines=get("/deadlines?month="+month).body();check(deadlines.contains("name=\"dataset\" value=\""+schema.id+"\"")&&deadlines.contains("name=\"period\" value=\""+period+"\""),"deadline grouping uses the same template-derived period");
+      byte[] missing;
+      try(Workbook wb=WorkbookFactory.create(new ByteArrayInputStream(bundleWorkbook("20251101-20251115","RC8-MISSING-"+schema.id)))){
+        wb.getSheet(schema.label).getRow(schema.headerRows).getCell(schema.periodColumn<0?11:schema.periodColumn).setBlank();ByteArrayOutputStream out=new ByteArrayOutputStream();wb.write(out);missing=out.toByteArray();
+      }
+      var rejected=uploadBundleFiles(List.of(missing),List.of("20251101-20251115.xlsx"),csrf(),"2025-11");
+      check(rejected.statusCode()==400&&rejected.body().contains(schema.periodColumn<0?"违约首次出现时间必填":"时间顺序必填"),"missing source date cannot be filled by filename or forged month");
+      check(!get("/details?dataset=multi&month=2025-11&q=RC8-MISSING-"+schema.id).body().contains("虚构测试企业 RC8-MISSING"),"missing date rejects entire three-sheet batch");
+    }
+    var again=uploadBundleFiles(List.of(file),List.of("20391201-20391215.xlsx"),csrf(),"2032-01");check(again.statusCode()==200&&again.body().contains("重复 3 条"),"renaming workbook cannot create another period or duplicate records");
+    String duplicateToken=HttpSmokeTest.hidden(again.body()).get("token");check(post("/imports/cancel",Map.of("csrf",csrf(),"token",duplicateToken,"revision","1")).statusCode()==303,"release synthetic duplicate preview so later suites retain import quota");
   }
   static HttpResponse<String> upload(List<byte[]> files,List<String> names,String csrf)throws Exception{
     String boundary="SyntheticA2"+UUID.randomUUID();ByteArrayOutputStream out=new ByteArrayOutputStream();
