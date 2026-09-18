@@ -24,6 +24,12 @@ public final class BusinessViewTest {
         RowRef scopedRow=row;expect(SecurityException.class,()->BusinessWorkflowState.load(platform,other,List.of(scopedRow)));
         var html=pages(operator).details(dashboard,filter(operator,dataset,"all"),1,own);check(html.contains("我的草稿")&&!html.contains("B2-PRIVATE-CONTENT"),"private draft is only a label; official cells unchanged");
         check(html.contains("record="+row.record.id)&&html.contains("draft="+draft.id()),"row action resumes exact draft and row");
+        String detailTable=html.substring(html.indexOf("<table class=\"data-table detail-table\">"));detailTable=detailTable.substring(0,detailTable.indexOf("</table>"));
+        check(!detailTable.contains("期次／历史保留信息")&&detailTable.split("<th[ >]",-1).length-1==schema.width()+1,"detail has only template columns plus existing workflow action column: "+dataset);
+        String body=detailTable.substring(detailTable.indexOf("<tbody>"));check(body.split("<td[ >]",-1).length-1==schema.width()+1,"row cells align after extra metadata column removed");
+        check(detailTable.contains(dataset.equals("cross")?"违约首次出现时间":"时间顺序"),"original template time field retained");
+        var emptyFilter=BusinessFilter.from(operator,Map.of("dataset",dataset,"q","NO-RC8-MATCH"));String emptyDetail=pages(operator).details(dashboard,emptyFilter,1,BusinessWorkflowState.empty());
+        check(emptyDetail.contains("colspan=\""+(schema.width()+1)+"\""),"empty table spans exactly displayed columns");
         assertExport(data,operator,dataset,"complete",0,"");assertExport(data,operator,dataset,"incomplete",1,"");
         var pending=workflow.confirm(operator,workflow.previewDraft(operator,draft.id(),draft.version()).id(),id());
         var sent=BusinessWorkflowState.load(platform,operator,List.of(row));check(sent.get(row.record.id).pending().id().equals(pending.id())&&sent.get(row.record.id).draft()==null,"submitted draft not mislabelled unsent");

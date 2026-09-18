@@ -57,8 +57,26 @@ public final class ImportWorkbookTest {
     check(inferredBundle.errors().isEmpty()&&inferredBundle.sources().stream().filter(s->s.record().dataset().equals("cross")).allMatch(s->s.record().period().key().equals("2026-10")),"cross sheet uses row first-default date");
     var conflictingBundle=reader.inspectBundle(bundleRows("20261001-20261015"),"2026-10-cross.xlsx","2026-09","");
     check(conflictingBundle.errors().isEmpty()&&conflictingBundle.sources().stream().allMatch(i->i.record().period().key().startsWith("2026-10")),"explicit row period and first-default date remain authoritative");
-    dateRules(reader);
+    dateRules(reader);periodRules(reader);
     exports();System.out.println("IMPORT_WORKBOOK_OK assertions="+assertions+" synthetic templates, parser diagnostics, identifiers, cache and authorized XLSX exports");
+  }
+  static void periodRules(WorkbookImporter reader)throws Exception{
+    for(String type:List.of("multi","negative")){
+      var schema=DatasetSchema.get(type);int column=schema.periodColumn;
+      for(String value:List.of("2025-02","20250201-20250215","2025/02/01至2025/02/15","20250216-20250315")){
+        var report=reader.inspect(book(type,wb->wb.getSheetAt(0).getRow(schema.headerRows).getCell(column).setCellValue(value)),"20260901-20260915.xlsx","2026-10","20261101-20261115",type);
+        check(report.errors().isEmpty()&&report.sources().get(0).record().period().start().getYear()==2025,"row time order wins over filename and conflicting obsolete arguments: "+type+value);
+        var record=report.sources().get(0).record();check(record.period().equals(xinguan.platform.Period.parse(value,""))&&record.values().get(column).equals(record.period().key()),"normalized template time and stored period agree");
+      }
+      for(String value:List.of("","2026-02-30~2026-03-01","20260930-20260901","2026-13","2026-09-P1","bad-date")){
+        var report=reader.inspect(book(type,wb->wb.getSheetAt(0).getRow(schema.headerRows).getCell(column).setCellValue(value)),"20260901-20260915.xlsx","2026-09","20260901-20260915",type);
+        check(report.sources().isEmpty()&&report.errors().size()==1&&report.errors().get(0).column().equals(org.apache.poi.ss.util.CellReference.convertNumToColString(column))&&report.errors().get(0).message().contains("时间顺序必填"),"invalid row date cannot fall back to any external period: "+type+value);
+      }
+      byte[] mixed=book(type,wb->{Sheet sh=wb.getSheetAt(0);sh.getRow(schema.headerRows).getCell(column).setCellValue("2025-02");Row second=sh.createRow(schema.headerRows+1);var values=FoundationTest.candidate(type,"WUJIN","rc8-other-month").values();for(int c=0;c<values.size();c++)second.createCell(c).setCellValue(values.get(c));second.getCell(column).setCellValue("20251201-20251215");});
+      var report=reader.inspect(mixed,"2026-09.xlsx","","",type);check(report.errors().isEmpty()&&report.sources().size()==2&&report.sources().get(0).record().period().key().equals("2025-02")&&report.sources().get(1).record().period().key().equals("2025-12-01~2025-12-15"),"each row of same sheet uses its own time order");
+    }
+    var bundle=reader.inspectBundle(bundleRows(),"20251201-20251215.xlsx","2025-02","20250101-20250115");
+    check(bundle.errors().isEmpty()&&bundle.sources().size()==3&&bundle.sources().stream().allMatch(s->s.record().period().key().startsWith("2026-09")),"obsolete contradictory bundle parameters cannot replace row dates");
   }
   static void dateRules(WorkbookImporter reader)throws Exception{
     for(String text:List.of("2025-2-3","2025/2/3","2025.02.03","2025年2月3日","20250203","2025-02-03 12:34:56")){
