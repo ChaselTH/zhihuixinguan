@@ -9,6 +9,7 @@ final class BusinessWorkflowState {
   BusinessWorkflowState(Map<String,RowState> states){this.states=Map.copyOf(states);}
   static BusinessWorkflowState empty(){return new BusinessWorkflowState(Map.of());}
   RowState get(String id){return states.getOrDefault(id,new RowState(null,false,null,null));}
+  Draft firstDraft(Collection<RowRef> rows){for(RowRef row:rows){Draft draft=get(row.record.id).draft();if(draft!=null)return draft;}return null;}
   static BusinessWorkflowState load(PlatformStore store,ActorContext actor,Collection<RowRef> shown){
     if(shown.isEmpty())return empty();
     synchronized(store){

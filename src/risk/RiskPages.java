@@ -1,5 +1,6 @@
 import java.util.*;
 import xinguan.platform.*;
+import xinguan.platform.WorkflowContracts.*;
 
 final class RiskPages extends PageLayout {
   RiskPages(String version,AuthService.Session session){super(version,session);}
@@ -36,7 +37,7 @@ final class RiskPages extends PageLayout {
   String details(DashboardData d,BusinessFilter filter,int pageNo,BusinessWorkflowState states){
     DatasetSchema schema=DatasetSchema.get(filter.dataset);List<RowRef> all=filter.rows(d);int pages=Math.max(1,(all.size()+filter.pageSize-1)/filter.pageSize);pageNo=Math.max(1,Math.min(pages,pageNo));
     StringBuilder b=new StringBuilder(backButton("/?"+d.range.queryString())).append(rangeForm("/details",d,filter.hidden()));
-    b.append("<div class=\"details-title clearfix\"><h1>").append(e(schema.label)).append(filter.branch.isBlank()?"":" · "+e(filter.branch)).append("</h1><p>当前筛选共 ").append(all.size()).append(" 条正式记录；任意黄色填报单元格非空即完成，草稿及待复核不计入。</p><a class=\"btn btn-export\" href=\"/export?").append(e(filter.query(d.range))).append("\">导出当前筛选 Excel</a></div>");
+    b.append("<div class=\"details-title clearfix\"><h1>").append(e(schema.label)).append(filter.branch.isBlank()?"":" · "+e(filter.branch)).append("</h1><p>当前筛选共 ").append(all.size()).append(" 条正式记录；任意黄色填报单元格非空即完成，草稿及待复核不计入。</p><a class=\"btn btn-export\" href=\"/export?").append(e(filter.query(d.range))).append("\">导出当前筛选 Excel</a><a class=\"btn btn-light\" href=\"/records/history?").append(e(historyQuery(filter))).append("\">支行修改记录</a></div>");
     b.append(filterForm("/details",d,filter)).append(legend());
     String pager=pager(d,filter,pageNo,pages);b.append(pager);
     int start=(pageNo-1)*filter.pageSize;b.append(table(filter,all.subList(start,Math.min(start+filter.pageSize,all.size())),d.range,pageNo,states)).append(pager);
@@ -91,19 +92,27 @@ final class RiskPages extends PageLayout {
   private String table(BusinessFilter filter,List<RowRef> rows,RangeSelection range,int pageNo,BusinessWorkflowState states){
     DatasetSchema schema=DatasetSchema.get(filter.dataset);var session=currentSession;boolean directAllowed=AccessPolicy.can(session.actor,AccessPolicy.Action.DIRECT_EDIT,session.actor.organizationId());
     boolean singleOrganization=rows.stream().map(r->r.record.organizationId).distinct().count()<=1&&rows.stream().allMatch(r->Organizations.BRANCHES.containsKey(r.record.organizationId));
-    boolean canEdit=directAllowed&&singleOrganization;
+    boolean operator=session.actor.role()==Role.OPERATOR;
+    boolean canEdit=(directAllowed&&(singleOrganization||session.actor.role()==Role.DIVISION_ADMIN))||operator;
+    Draft pageDraft=operator?states.firstDraft(rows):null;
+    String formAction=operator?"/workflow/draft/save":"/update-batch";
     BusinessRowPresentation cells=new BusinessRowPresentation(session);
-    StringBuilder b=new StringBuilder("<form method=\"post\" action=\"/update-batch\">").append(hidden("csrf",session.csrf)).append(hidden("requestId",UUID.randomUUID().toString())).append(rangeHidden(range)).append(filter.hidden()).append(hidden("page",""+pageNo)).append(hidden("rows",""+rows.size()));
-    if(!rows.isEmpty()&&canEdit)b.append("<div class=\"batch-edit-bar clearfix\"><span>统一保存当前页；先预览差异，确认后才生效</span><button class=\"btn btn-primary\" type=\"submit\">保存资料补充 · 预览确认</button></div>");
-    if(directAllowed&&!singleOrganization)b.append("<p class=\"business-note\">跨支行清单请先筛选一家支行后统一填写，也可使用每条记录的修改入口。</p>");
-    if(session.actor.role()==Role.OPERATOR)b.append("<p class=\"business-note\">黄色列展示正式值；点击每条记录的“填写并提交”或“继续我的草稿”进入私人填报。</p>");
+    StringBuilder b=new StringBuilder("<form method=\"post\" action=\"").append(formAction).append("\">").append(hidden("csrf",session.csrf)).append(hidden("requestId",UUID.randomUUID().toString())).append(rangeHidden(range)).append(filter.hidden()).append(hidden("page",""+pageNo)).append(hidden("rows",""+rows.size()));
+    if(operator)b.append(hidden("dataset",filter.dataset)).append(hidden("organization",session.actor.organizationId())).append(hidden("from","")).append(hidden("through","")).append(hidden("draftId",pageDraft==null?"":pageDraft.id())).append(hidden("draftVersion",pageDraft==null?"0":""+pageDraft.version())).append(hidden("priorSubmissionId","")).append(hidden("record",""));
+    if(!rows.isEmpty()&&canEdit){
+      if(operator)b.append("<div class=\"batch-edit-bar clearfix\"><span>黄色字段只保存本人草稿；提交前会显示服务端差异。</span><button class=\"btn btn-primary\" type=\"submit\" name=\"intent\" value=\"preview\">提交</button><button class=\"btn btn-light\" type=\"submit\" name=\"intent\" value=\"save\">保存草稿</button></div>");
+      else b.append("<div class=\"batch-edit-bar clearfix\"><span>统一保存当前页；先预览差异，确认后才生效</span><button class=\"btn btn-primary\" type=\"submit\">保存资料补充 · 预览确认</button></div>");
+    }
+    if(directAllowed&&!singleOrganization&&session.actor.role()!=Role.DIVISION_ADMIN)b.append("<p class=\"business-note\">当前账号只能在所属支行范围内统一填写。</p>");
+    if(session.actor.role()==Role.OPERATOR)b.append("<p class=\"business-note\">黄色列展示正式值；请使用上方统一入口填写并提交，未保存输入离开前会提示。</p>");
     b.append("<div class=\"table-scroll\"><table class=\"data-table detail-table\"><thead><tr><th class=\"business-status\">正式状态／流程入口</th>");
     for(var field:schema.fields)b.append("<th class=\"").append(field.editable()?"editable-head ":"").append(width(field)).append("\">").append(e(field.title())).append("</th>");
     b.append("</tr></thead><tbody>");
     for(int i=0;i<rows.size();i++){RowRef row=rows.get(i);b.append("<tr class=\"").append(row.rowClass()).append("\"><td class=\"business-status\">").append(cells.status(row,states)).append("<div class=\"business-actions\">").append(cells.actions(row,states,range)).append("</div></td>");
-      for(int c=0;c<schema.width();c++){var field=schema.fields.get(c);String value=schema.value(row.values,c);b.append("<td class=\"").append(field.editable()?"editable-cell ":"").append(width(field)).append("\">");
-        if(c==0)b.append(hidden("id"+i,row.record.id)).append(hidden("version"+i,""+row.record.versions.get(row.rowIndex)));
-        if(field.editable()&&canEdit){String name="v"+i+"_"+c;if(field.options().isEmpty())b.append("<textarea rows=\"3\" name=\"").append(name).append("\">").append(e(value)).append("</textarea>");
+      BusinessWorkflowState.RowState rowState=states.get(row.record.id);SnapshotRow savedRow=rowState.draft()==null?null:rowState.draft().rows().stream().filter(saved->saved.before().id().equals(row.record.id)).findFirst().orElse(null);
+      for(int c=0;c<schema.width();c++){var field=schema.fields.get(c);String value=savedRow!=null&&savedRow.change().values().containsKey(field.key())?savedRow.change().values().get(field.key()):schema.value(row.values,c);b.append("<td class=\"").append(field.editable()?"editable-cell ":"").append(width(field)).append("\">");
+        if(c==0)b.append(hidden("id"+i,row.record.id)).append(hidden("version"+i,""+(savedRow==null?row.record.versions.get(row.rowIndex):savedRow.change().expectedVersion())));
+        if(field.editable()&&canEdit){String name=operator?"value_"+i+"_"+field.key():"v"+i+"_"+c;if(field.options().isEmpty())b.append("<textarea rows=\"3\" name=\"").append(name).append("\">").append(e(value)).append("</textarea>");
           else{b.append("<select name=\"").append(name).append("\">").append(option("","请选择",value));if(!value.isBlank()&&!field.options().contains(value))b.append(option(value,value+"（历史值）",value));for(String option:field.options())b.append(option(option,option,value));b.append("</select>");}}
         else b.append(e(value));b.append("</td>");
       }
@@ -111,6 +120,12 @@ final class RiskPages extends PageLayout {
     }
     if(rows.isEmpty())b.append("<tr><td colspan=\"").append(schema.width()+1).append("\" class=\"table-empty\">当前筛选无记录，请调整时间、机构、状态或搜索条件</td></tr>");
     return b.append("</tbody></table></div></form>").toString();
+  }
+  private String historyQuery(BusinessFilter filter){
+    StringBuilder q=new StringBuilder("organization=").append(u(filter.branch));
+    if(!filter.dataset.isBlank())q.append("&amp;dataset=").append(u(filter.dataset));
+    if(!filter.period.isBlank())q.append("&amp;period=").append(u(filter.period));
+    return q.toString();
   }
   static String width(DatasetSchema.Field field){return field.key().contains("feedback")||field.key().equals("control_measures")||field.key().equals("warning_detail")?"col-feedback":field.title().length()>18?"col-long":"col-standard";}
   static String legend(){return "<p class=\"business-legend business-note\">浅绿色：正式已完成；白色：正式未完成；黄色：可填报字段。红色：超过反馈截止日期仍未完成；黄色填报列保持原色。草稿及待复核不计正式完成。</p>";}

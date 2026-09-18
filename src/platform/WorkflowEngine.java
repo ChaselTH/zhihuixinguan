@@ -37,6 +37,7 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
       if(draftId.isEmpty()) { if(expectedVersion!=0)throw error(Code.INVALID_INPUT,"新草稿版本必须为 0");draftId=id(); }
       else {
         old=loadDraft(a,draftId);
+        if(isConsumed(a,old))throw error(Code.ALREADY_DECIDED,"该草稿版本已提交并冻结，请从提交记录查看；如需修改请使用退回后的新草稿");
         if(old.version()!=expectedVersion)throw error(Code.VERSION_CONFLICT,"草稿已被另一页面保存，请恢复最新草稿后重试");
         if(!old.dataset().equals(dataset))throw error(Code.INVALID_INPUT,"不能改变已有草稿的数据集");
       }
@@ -56,10 +57,12 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
   @Override public List<Draft> drafts(ActorContext a,String dataset,int offset,int limit) {
     return call(a,()->{
       operator(a);page(offset,limit);if(!blank(dataset).isEmpty())DatasetSchema.get(dataset);
-      String sql="SELECT * FROM drafts WHERE owner_id=? AND organization_id=?";
+      String sql="SELECT d.* FROM drafts d WHERE d.owner_id=? AND d.organization_id=?";
       List<Object> args=new ArrayList<>(List.of(a.userId(),a.organizationId()));
-      if(!blank(dataset).isEmpty()){sql+=" AND dataset=?";args.add(dataset);}
-      sql+=" ORDER BY updated_at DESC,id LIMIT ? OFFSET ?";args.add(limit);args.add(offset);
+      if(!blank(dataset).isEmpty()){sql+=" AND d.dataset=?";args.add(dataset);}
+      // Filter consumed versions before paging so a submitted version cannot hide a later draft.
+      sql+=" AND NOT EXISTS (SELECT 1 FROM submissions s WHERE s.owner_id=d.owner_id AND s.draft_id=d.id AND s.draft_revision=d.revision AND s.state IN ('SUBMITTED','APPROVED'))";
+      sql+=" ORDER BY d.updated_at DESC,d.id LIMIT ? OFFSET ?";args.add(limit);args.add(offset);
       List<Draft> result=new ArrayList<>();
       try(PreparedStatement st=statement(sql,args.toArray());ResultSet rs=st.executeQuery()){while(rs.next())result.add(readDraft(rs));}
       return List.copyOf(result);
@@ -68,6 +71,7 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
   @Override public Preview previewDraft(ActorContext a,String draftId,long expectedVersion) {
     return call(a,()->{
       operator(a);Draft draft=loadDraft(a,draftId);
+      if(isConsumed(a,draft))throw error(Code.ALREADY_DECIDED,"该草稿版本已提交并冻结，请从提交记录查看；如需修改请使用退回后的新草稿");
       if(draft.version()!=expectedVersion)throw error(Code.VERSION_CONFLICT,"草稿已变化，请使用最新草稿重新预览");
       requireRows(draft.rows());validateSnapshot(a,draft.rows(),AccessPolicy.Action.SUBMIT);
       return createPreview(a,Mode.REVIEW,draft.organizationId(),draft.dataset(),draft.id(),draft.version(),draft.priorSubmissionId(),draft.rows());
@@ -76,7 +80,7 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
   @Override public Preview previewDirect(ActorContext a,String dataset,List<RecordChange> changes) {
     return call(a,()->{
       direct(a);List<SnapshotRow> rows=snapshot(a,dataset,changes,AccessPolicy.Action.DIRECT_EDIT,false);
-      return createPreview(a,Mode.DIRECT,rows.get(0).before().organizationId(),dataset,"",0,"",rows);
+      return createPreview(a,Mode.DIRECT,batchOrganization(a,rows),dataset,"",0,"",rows);
     });
   }
   @Override public Preview preview(ActorContext a,String previewId) {
@@ -136,7 +140,7 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
     return call(a,()->{
       store.find(a,recordId);page(offset,limit);List<Submission> result=new ArrayList<>();
       try(PreparedStatement st=statement("SELECT s.* FROM submissions s JOIN submission_items i ON i.submission_id=s.id WHERE i.record_id=? ORDER BY s.created_at DESC,s.id LIMIT ? OFFSET ?",recordId,limit,offset);ResultSet rs=st.executeQuery()) {
-        while(rs.next()){AccessPolicy.require(a,AccessPolicy.Action.VIEW,rs.getString("organization_id"));result.add(readSubmission(rs));}
+        while(rs.next())result.add(visibleSubmission(a,readSubmission(rs)));
       }
       return List.copyOf(result);
     });
@@ -144,9 +148,12 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
   @Override public List<AuditEntry> auditTrail(ActorContext a,String submissionId) {
     return call(a,()->{
       Submission submission=loadSubmission(a,submissionId);List<AuditEntry> result=new ArrayList<>();
-      String sql="SELECT e.* FROM audit_events e JOIN workflow_audit_links l ON l.event_id=e.id WHERE e.organization_id=? AND l.submission_id=?"+(a.role()==Role.SUPER_ADMIN?"":" AND e.actor_role<>'SUPER_ADMIN'")+" ORDER BY e.event_at,e.id";
-      try(PreparedStatement st=statement(sql,submission.organizationId(),submissionId);ResultSet rs=st.executeQuery()) {
-        while(rs.next())result.add(new AuditEntry(rs.getString("id"),Instant.parse(rs.getString("event_at")),rs.getString("actor_id"),rs.getString("actor_name"),rs.getString("actor_role"),rs.getString("record_id"),rs.getString("action"),rs.getString("request_id"),rs.getString("before_data"),rs.getString("after_data"),rs.getString("details")));
+      String sql="SELECT e.* FROM audit_events e JOIN workflow_audit_links l ON l.event_id=e.id WHERE l.submission_id=?"+(a.role()==Role.SUPER_ADMIN?"":" AND e.actor_role<>'SUPER_ADMIN'")+" ORDER BY e.event_at,e.id";
+      try(PreparedStatement st=statement(sql,submissionId);ResultSet rs=st.executeQuery()) {
+        while(rs.next()) {
+          String org=rs.getString("organization_id");
+          if(AccessPolicy.can(a,AccessPolicy.Action.VIEW,org))result.add(new AuditEntry(rs.getString("id"),Instant.parse(rs.getString("event_at")),rs.getString("actor_id"),rs.getString("actor_name"),rs.getString("actor_role"),rs.getString("record_id"),rs.getString("action"),rs.getString("request_id"),rs.getString("before_data"),rs.getString("after_data"),rs.getString("details")));
+        }
       }
       return List.copyOf(result);
     });
@@ -220,12 +227,12 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
 
   private List<SnapshotRow> snapshot(ActorContext a,String dataset,List<RecordChange> changes,AccessPolicy.Action action,boolean emptyAllowed) {
     DatasetSchema schema=DatasetSchema.get(dataset);validateChanges(changes,emptyAllowed);
-    Set<String> seen=new HashSet<>();List<SnapshotRow> result=new ArrayList<>();List<Conflict> conflicts=new ArrayList<>();String org=null;
+    Set<String> seen=new HashSet<>();List<SnapshotRow> result=new ArrayList<>();List<Conflict> conflicts=new ArrayList<>();String org=null;boolean multiDirect=action==AccessPolicy.Action.DIRECT_EDIT&&a.role()==Role.DIVISION_ADMIN;
     for(RecordChange change:changes) {
       if(!seen.add(change.recordId()))throw error(Code.INVALID_INPUT,"一次修改不能包含重复记录");
       BusinessRecord current=store.find(a,change.recordId());AccessPolicy.require(a,action,current.organizationId());
       if(!current.dataset().equals(dataset))throw error(Code.INVALID_INPUT,"一单只能修改同一种表格");
-      if(org!=null&&!org.equals(current.organizationId()))throw error(Code.INVALID_INPUT,"一单只能包含同一家支行，请分单提交");
+      if(org!=null&&!org.equals(current.organizationId())&&!multiDirect)throw error(Code.INVALID_INPUT,"一单只能包含同一家支行，请分单提交");
       org=current.organizationId();Map<String,String> values=new TreeMap<>();
       for(var e:change.values().entrySet()) {
         int index=schema.index(e.getKey());schema.validateEdit(index,e.getValue());String value=e.getValue().strip();
@@ -236,6 +243,10 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
     }
     if(!conflicts.isEmpty())throw conflicts(conflicts);
     if(!emptyAllowed)requireRows(result);encode(result);return List.copyOf(result);
+  }
+  private String batchOrganization(ActorContext a,List<SnapshotRow> rows) {
+    if(a.role()==Role.DIVISION_ADMIN&&rows.stream().map(r->r.before().organizationId()).distinct().count()>1)return Organizations.DIVISION;
+    return rows.get(0).before().organizationId();
   }
   private void validateSnapshot(ActorContext a,List<SnapshotRow> rows,AccessPolicy.Action action) {
     requireRows(rows);List<Conflict> conflicts=new ArrayList<>();
@@ -269,8 +280,13 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
   private Draft loadDraft(ActorContext a,String id)throws SQLException {
     operator(a);
     try(PreparedStatement st=statement("SELECT * FROM drafts WHERE id=? AND owner_id=? AND organization_id=?",id,a.userId(),a.organizationId());ResultSet rs=st.executeQuery()) {
-      if(!rs.next())throw new SecurityException("草稿不存在或无权访问");return readDraft(rs);
+      if(!rs.next())throw new SecurityException("草稿不存在或无权访问");
+      return readDraft(rs);
     }
+  }
+  private boolean isConsumed(ActorContext a,Draft draft)throws SQLException {
+    String consumed=scalar("SELECT COUNT(*) FROM submissions WHERE owner_id=? AND draft_id=? AND draft_revision=? AND state IN ('SUBMITTED','APPROVED')",a.userId(),draft.id(),draft.version());
+    return consumed!=null&&Integer.parseInt(consumed)>0;
   }
   private Draft readDraft(ResultSet rs)throws SQLException {
     return new Draft(rs.getString("id"),rs.getString("owner_id"),rs.getString("organization_id"),rs.getString("dataset"),rs.getLong("revision"),Instant.parse(rs.getString("updated_at")),rs.getString("prior_submission_id"),WorkflowCodec.rows(rs.getString("payload")));
@@ -278,7 +294,7 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
   private Submission loadSubmission(ActorContext a,String id)throws SQLException {
     try(PreparedStatement st=statement("SELECT * FROM submissions WHERE id=?",id);ResultSet rs=st.executeQuery()) {
       if(!rs.next())throw new SecurityException("提交单不存在或无权访问");
-      AccessPolicy.require(a,AccessPolicy.Action.VIEW,rs.getString("organization_id"));return readSubmission(rs);
+      return visibleSubmission(a,readSubmission(rs));
     }
   }
   private Submission readSubmission(ResultSet rs)throws SQLException {
@@ -288,10 +304,14 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
     if(query==null)throw error(Code.INVALID_INPUT,"缺少查询条件");page(query.offset(),query.limit());
     if(query.from()!=null&&query.through()!=null&&query.from().isAfter(query.through()))throw error(Code.INVALID_INPUT,"时间区间无效");
     String sql="SELECT s.* FROM submissions s WHERE 1=1";List<Object> args=new ArrayList<>();
-    if(!AccessPolicy.all(a)){sql+=" AND s.organization_id=?";args.add(a.organizationId());}
+    if(!AccessPolicy.all(a)){sql+=" AND EXISTS (SELECT 1 FROM submission_items scope_i JOIN official_records scope_o ON scope_o.id=scope_i.record_id WHERE scope_i.submission_id=s.id AND scope_o.organization_id=?)";args.add(a.organizationId());}
     if(!blank(query.organization()).isEmpty()) {
       if(!Organizations.BRANCHES.containsKey(query.organization()))throw error(Code.INVALID_INPUT,"查询机构无效");
-      AccessPolicy.require(a,AccessPolicy.Action.VIEW,query.organization());sql+=" AND s.organization_id=?";args.add(query.organization());
+      AccessPolicy.require(a,AccessPolicy.Action.VIEW,query.organization());
+      if(AccessPolicy.all(a)) {
+        sql+=" AND (s.organization_id=? OR EXISTS (SELECT 1 FROM submission_items scoped_i JOIN official_records scoped_o ON scoped_o.id=scoped_i.record_id WHERE scoped_i.submission_id=s.id AND scoped_o.organization_id=?))";
+        args.add(query.organization());args.add(query.organization());
+      } else { sql+=" AND EXISTS (SELECT 1 FROM submission_items scoped_i JOIN official_records scoped_o ON scoped_o.id=scoped_i.record_id WHERE scoped_i.submission_id=s.id AND scoped_o.organization_id=?)";args.add(query.organization()); }
     }
     if(!blank(query.dataset()).isEmpty()){DatasetSchema.get(query.dataset());sql+=" AND s.dataset=?";args.add(query.dataset());}
     State state=pending?State.SUBMITTED:query.state();if(state!=null){sql+=" AND s.state=?";args.add(state.name());}
@@ -303,8 +323,14 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
       sql+=")";
     }
     sql+=" ORDER BY s.created_at DESC,s.id LIMIT ? OFFSET ?";args.add(query.limit());args.add(query.offset());
-    List<Submission> result=new ArrayList<>();try(PreparedStatement st=statement(sql,args.toArray());ResultSet rs=st.executeQuery()){while(rs.next())result.add(readSubmission(rs));}
+    List<Submission> result=new ArrayList<>();try(PreparedStatement st=statement(sql,args.toArray());ResultSet rs=st.executeQuery()){while(rs.next())result.add(visibleSubmission(a,readSubmission(rs)));}
     return List.copyOf(result);
+  }
+  private Submission visibleSubmission(ActorContext a,Submission submission) {
+    if(AccessPolicy.can(a,AccessPolicy.Action.VIEW,submission.organizationId()))return submission;
+    List<SnapshotRow> rows=submission.rows().stream().filter(row->AccessPolicy.can(a,AccessPolicy.Action.VIEW,row.before().organizationId())).toList();
+    if(rows.isEmpty())throw new SecurityException("提交单不存在或无权访问");
+    return new Submission(submission.id(),submission.mode(),submission.state(),submission.ownerId(),submission.ownerName(),submission.organizationId(),submission.dataset(),submission.draftId(),submission.draftVersion(),submission.priorSubmissionId(),submission.createdAt(),submission.reviewerId(),submission.reviewerName(),submission.decidedAt(),submission.reason(),rows);
   }
   private void checkPrior(ActorContext a,String prior,String dataset,String org)throws SQLException {
     if(prior.isEmpty())return;Submission old=loadSubmission(a,prior);

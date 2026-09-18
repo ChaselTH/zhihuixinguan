@@ -26,7 +26,7 @@ final class WorkflowIntegrationHttpTest {
     var saved=post("/workflow/draft/save",fields);check(saved.statusCode()==303,"private draft saved through real Main");
     String draftUrl=saved.headers().firstValue("location").orElseThrow();String editor=get(draftUrl).body();
     check(editor.contains("INTEGRATION_DRAFT_ONLY &lt;script&gt;"),"own draft restored and escaped");
-    check(!get("/details?dataset=negative&month=2026-09").body().contains("INTEGRATION_DRAFT_ONLY")&&!exportText("negative").contains("INTEGRATION_DRAFT_ONLY"),"draft excluded from official page and XLSX");
+    check(get("/details?dataset=negative&month=2026-09").body().contains("INTEGRATION_DRAFT_ONLY")&&!exportText("negative").contains("INTEGRATION_DRAFT_ONLY"),"owner can restore draft in unified table while official XLSX remains unchanged");
     use(peerClient);check(get(draftUrl).statusCode()==403,"same branch peer cannot read private draft");use(otherClient);check(get(draftUrl).statusCode()==403,"other branch cannot read private draft");
     use(root);check(get(draftUrl).statusCode()==403,"super cannot read private draft body");
     use(operator);fields=form(editor,"/workflow/draft/save");fields.put("intent","preview");

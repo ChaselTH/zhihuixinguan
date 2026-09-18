@@ -107,12 +107,24 @@ final class WorkflowRoutes {
       if(!draftMode)throw new SecurityException("只有操作员可以恢复私人草稿");
       draft=workflow.draft(actor,draftId);
       if(!draft.dataset().equals(dataset))throw new IllegalArgumentException("草稿与当前表种不一致");
+      Draft requestedDraft=draft;boolean active=workflow.drafts(actor,dataset,0,100).stream().anyMatch(candidate->candidate.id().equals(requestedDraft.id())&&candidate.version()==requestedDraft.version());
+      if(!active)throw new IllegalArgumentException("该草稿版本已提交并冻结，请从提交记录查看；退回后可恢复新的草稿");
     }
     String prior=clean(query.get("prior"));
     if(draft!=null&&prior.isEmpty())prior=draft.priorSubmissionId();
     verifyPrior(actor,prior,dataset);
     List<BusinessRecord> rows=organization.isEmpty()?List.of():new ArrayList<>(store.list(actor,dataset,from,through));
     if(!organization.isEmpty())rows.removeIf(row->!organization.equals(row.organizationId()));
+    // Restoring a private draft is a focused view: show only rows with actual
+    // saved differences. New rows are added from the unified business table.
+    if(draft!=null) {
+      List<BusinessRecord> draftRows=new ArrayList<>();
+      for(SnapshotRow savedRow:draft.rows()) {
+        BusinessRecord current=store.find(actor,savedRow.before().id());
+        if(current.dataset().equals(dataset)&&current.organizationId().equals(organization))draftRows.add(current);
+      }
+      rows=draftRows;
+    }
     String focus=clean(query.get("record"));
     if(!focus.isEmpty()){
       BusinessRecord target=store.find(actor,focus);
@@ -154,7 +166,7 @@ final class WorkflowRoutes {
   }
 
   private List<RecordChange> pageChanges(ActorContext actor,String dataset,Map<String,String> form) {
-    int count=bounded(form.get("rows"),0,EDIT_PAGE_SIZE,"页面记录数");
+    int count=bounded(form.get("rows"),0,Math.max(EDIT_PAGE_SIZE,50),"页面记录数");
     if(count<1)throw new IllegalArgumentException("当前页没有可提交的记录");
     DatasetSchema schema=DatasetSchema.get(dataset);List<RecordChange> result=new ArrayList<>();Set<String> seen=new HashSet<>();
     for(int i=0;i<count;i++) {

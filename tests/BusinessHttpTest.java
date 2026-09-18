@@ -22,7 +22,7 @@ final class BusinessHttpTest {
     check(get(focus.replace(ownId,foreignId)).statusCode()==403,"foreign record focus rejected");
     form.put("value_0_feedback","B2-HTTP-PRIVATE <script>text</script>");form.put("intent","save");var saved=post("/workflow/draft/save",form);check(saved.statusCode()==303&&saved.headers().firstValue("location").orElse("").contains("record="+ownId),"focused draft save restores exact record");
     String draftUrl=saved.headers().firstValue("location").orElseThrow();String draftPage=get(draftUrl).body();String draftId=HttpSmokeTest.hidden(draftPage).get("draftId");
-    list=get(url).body();check(list.contains("class=\"business-badge draft\"")&&!list.contains("B2-HTTP-PRIVATE"),"list labels own draft without replacing official values");
+    list=get(url).body();check(list.contains("class=\"business-badge draft\"")&&list.contains("B2-HTTP-PRIVATE"),"owner list restores own draft value while preserving private scope");
     use(root);check(!get(url).body().contains("我的草稿")&&!get(url).body().contains(draftId),"super cannot inspect private draft metadata");
     use(operator);form=WorkflowIntegrationHttpTest.form(draftPage,"/workflow/draft/save");form.put("intent","preview");var preview=post("/workflow/draft/save",form);check(preview.statusCode()==200,"B1 server diff still works from B2 action");
     var submitted=post("/workflow/confirm",HttpSmokeTest.hidden(preview.body()));check(submitted.statusCode()==200,"focused submission confirmed");
