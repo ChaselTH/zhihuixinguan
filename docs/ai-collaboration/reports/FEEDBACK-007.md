@@ -37,4 +37,4 @@
 ## 交付状态
 
 - 功能提交完整 SHA：`5949ec0827dc2012977d028bad31bf693d060a16`。
-- PR：推送后创建面向 `main` 的 PR，等待 ChaselTH 审查；本分支不自行合并、改版本或制作安装包。
+- PR：https://github.com/ChaselTH/zhihuixinguan/pull/11（面向 `main`，等待 ChaselTH 审查）；本分支不自行合并、改版本或制作安装包。
