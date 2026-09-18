@@ -123,11 +123,17 @@ public final class WorkflowRoutesTest {
   }
 
   static void integrationRegressions()throws Exception {
-    for(int i=0;i<35;i++)store.workflow().saveDraft(operator.actor(),"",0,"cross",List.of(),"",id());
-    var all=store.workflow().drafts(operator.actor(),"cross",0,100);
-    String page1=get(operatorSession,"/workflow/drafts?dataset=cross").body(),page2=get(operatorSession,"/workflow/drafts?dataset=cross&page=2").body();
-    check(page1.contains(all.get(0).id())&&page1.contains("下一页")&&page2.contains(all.get(34).id()),"all drafts reachable beyond first ten and first page");
-    check(!get(otherSession,"/workflow/drafts?dataset=cross").body().contains(all.get(0).id()),"draft pagination remains owner-only");
+    BusinessRecord pageRecord=store.list(operator.actor(),"multi",null,null).get(0);String field="feedback";
+    for(int i=0;i<35;i++)store.workflow().saveDraft(operator.actor(),"",0,"multi",List.of(new RecordChange(pageRecord.id(),pageRecord.version(),Map.of(field,"分页草稿 "+i))),"",id());
+    for(int i=35;i<136;i++)store.workflow().saveDraft(operator.actor(),"",0,"multi",List.of(new RecordChange(pageRecord.id(),pageRecord.version(),Map.of(field,"分页草稿 "+i))),"",id());
+    var all=store.workflow().drafts(operator.actor(),"multi",0,100);var tail=store.workflow().drafts(operator.actor(),"multi",100,100);
+    String page1=get(operatorSession,"/workflow/drafts?dataset=multi").body(),page2=get(operatorSession,"/workflow/drafts?dataset=multi&page=2").body();
+    check(all.size()==100&&tail.size()>=36&&page1.contains(all.get(0).id())&&page1.contains("下一页")&&page2.contains(all.get(34).id()),"all drafts reachable beyond first ten and first page");
+    Draft deep=tail.get(0);check(get(operatorSession,"/workflow/edit?dataset=multi&organization=WUJIN&draft="+deep.id()).status==200,"draft recovery does not depend on first 100 active versions");
+    String currentFeedback=DatasetSchema.get("multi").value(pageRecord.values(),DatasetSchema.get("multi").index(field));
+    Draft empty=store.workflow().saveDraft(operator.actor(),"",0,"multi",List.of(new RecordChange(pageRecord.id(),pageRecord.version(),Map.of(field,currentFeedback))),"",id());
+    check(empty.rows().isEmpty()&&!store.workflow().drafts(operator.actor(),"multi",0,100).stream().anyMatch(d->d.id().equals(empty.id())),"zero-difference draft leaves active list");
+    check(!get(otherSession,"/workflow/drafts?dataset=multi").body().contains(all.get(0).id()),"draft pagination remains owner-only");
     check(get(superSession,"/workflow/drafts").status==403,"admin cannot list private drafts");
     check(get(operatorSession,"/workflow/edit?dataset=multi&organization=JINTAN").status==403,"editor rejects forged organization filter");
     check(!get(reviewerSession,"/workflow/reviews").body().contains("<option value=\"APPROVED\""),"pending filters do not emit orphan state options");

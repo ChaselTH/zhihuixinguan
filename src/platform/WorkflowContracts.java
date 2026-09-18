@@ -62,6 +62,8 @@ public final class WorkflowContracts {
                     List<RecordChange> changes, String priorSubmissionId, String requestId);
     Draft draft(ActorContext actor, String id);
     List<Draft> drafts(ActorContext actor, String dataset, int offset, int limit);
+    /** Returns whether the exact latest draft version is still active and has an effective difference. */
+    boolean draftVersionActive(ActorContext actor, String draftId, long version);
     Preview previewDraft(ActorContext actor, String draftId, long expectedVersion);
     Preview previewDirect(ActorContext actor, String dataset, List<RecordChange> changes);
     Preview preview(ActorContext actor, String previewId);
@@ -71,6 +73,8 @@ public final class WorkflowContracts {
     List<Submission> submissions(ActorContext actor, Query query);
     List<Submission> pendingReviews(ActorContext actor, Query query);
     List<Submission> recordHistory(ActorContext actor, String recordId, int offset, int limit);
+    /** Returns all visible immutable submissions for the shared business-history view. */
+    List<Submission> history(ActorContext actor, String dataset, String organization);
     List<AuditEntry> auditTrail(ActorContext actor, String submissionId);
     Submission approve(ActorContext actor, String submissionId, String requestId);
     Submission reject(ActorContext actor, String submissionId, String reason, String requestId);

@@ -7,7 +7,7 @@
   function has(el, name) { return (" " + el.className + " ").indexOf(" " + name + " ") >= 0; }
   function init() {
     var forms = document.getElementsByTagName("form"), i, form, dirty = false;
-    for (i = 0; i < forms.length; i++) if (has(forms[i], "workflow-edit-form") || forms[i].action.indexOf("/workflow/draft/save") >= 0) {
+    for (i = 0; i < forms.length; i++) if (has(forms[i], "workflow-edit-form") || forms[i].action.indexOf("/workflow/draft/save") >= 0 || forms[i].action.indexOf("/update-batch") >= 0) {
       form = forms[i];
       (function (target) {
         var controls = target.getElementsByTagName("input"), j, selects = target.getElementsByTagName("select"), textareas = target.getElementsByTagName("textarea");

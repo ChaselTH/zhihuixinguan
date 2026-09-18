@@ -41,7 +41,7 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
         if(old.version()!=expectedVersion)throw error(Code.VERSION_CONFLICT,"草稿已被另一页面保存，请恢复最新草稿后重试");
         if(!old.dataset().equals(dataset))throw error(Code.INVALID_INPUT,"不能改变已有草稿的数据集");
       }
-      List<SnapshotRow> rows=snapshot(a,dataset,changes,AccessPolicy.Action.SAVE_DRAFT,true);
+      List<SnapshotRow> rows=snapshot(a,dataset,changes,AccessPolicy.Action.SAVE_DRAFT,true).stream().filter(row->hasEffectiveChange(a,row)).toList();
       checkPrior(a,prior,dataset,a.organizationId());
       String payload=encode(rows),now=now();
       if(old==null)exec("INSERT INTO drafts(id,owner_id,organization_id,dataset,payload,revision,updated_at,prior_submission_id) VALUES(?,?,?,?,?,1,?,?)",
@@ -54,18 +54,24 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
     });
   }
   @Override public Draft draft(ActorContext a,String id) { return call(a,()->{operator(a);return loadDraft(a,id);}); }
+  @Override public boolean draftVersionActive(ActorContext a,String draftId,long version) {
+    return call(a,()->{
+      operator(a);Draft draft=loadDraft(a,draftId);
+      return draft.version()==version&&!isConsumed(a,draft)&&hasEffectiveChange(a,draft);
+    });
+  }
   @Override public List<Draft> drafts(ActorContext a,String dataset,int offset,int limit) {
     return call(a,()->{
       operator(a);page(offset,limit);if(!blank(dataset).isEmpty())DatasetSchema.get(dataset);
       String sql="SELECT d.* FROM drafts d WHERE d.owner_id=? AND d.organization_id=?";
       List<Object> args=new ArrayList<>(List.of(a.userId(),a.organizationId()));
       if(!blank(dataset).isEmpty()){sql+=" AND d.dataset=?";args.add(dataset);}
-      // Filter consumed versions before paging so a submitted version cannot hide a later draft.
+      // Filter consumed versions and zero-difference payloads before applying offset/limit.
       sql+=" AND NOT EXISTS (SELECT 1 FROM submissions s WHERE s.owner_id=d.owner_id AND s.draft_id=d.id AND s.draft_revision=d.revision AND s.state IN ('SUBMITTED','APPROVED'))";
-      sql+=" ORDER BY d.updated_at DESC,d.id LIMIT ? OFFSET ?";args.add(limit);args.add(offset);
-      List<Draft> result=new ArrayList<>();
-      try(PreparedStatement st=statement(sql,args.toArray());ResultSet rs=st.executeQuery()){while(rs.next())result.add(readDraft(rs));}
-      return List.copyOf(result);
+      sql+=" ORDER BY d.updated_at DESC,d.id";
+      List<Draft> active=new ArrayList<>();
+      try(PreparedStatement st=statement(sql,args.toArray());ResultSet rs=st.executeQuery()){while(rs.next()){Draft draft=readDraft(rs);if(hasEffectiveChange(a,draft))active.add(draft);}}
+      int start=Math.min(offset,active.size());return List.copyOf(active.subList(start,Math.min(start+limit,active.size())));
     });
   }
   @Override public Preview previewDraft(ActorContext a,String draftId,long expectedVersion) {
@@ -141,6 +147,23 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
       store.find(a,recordId);page(offset,limit);List<Submission> result=new ArrayList<>();
       try(PreparedStatement st=statement("SELECT s.* FROM submissions s JOIN submission_items i ON i.submission_id=s.id WHERE i.record_id=? ORDER BY s.created_at DESC,s.id LIMIT ? OFFSET ?",recordId,limit,offset);ResultSet rs=st.executeQuery()) {
         while(rs.next())result.add(visibleSubmission(a,readSubmission(rs)));
+      }
+      return List.copyOf(result);
+    });
+  }
+  @Override public List<Submission> history(ActorContext a,String dataset,String organization) {
+    return call(a,()->{
+      String wantedDataset=blank(dataset),wantedOrg=blank(organization);
+      if(!wantedDataset.isEmpty())DatasetSchema.get(wantedDataset);
+      if(!wantedOrg.isEmpty()){if(!Organizations.BRANCHES.containsKey(wantedOrg))throw error(Code.INVALID_INPUT,"查询机构无效");AccessPolicy.require(a,AccessPolicy.Action.VIEW,wantedOrg);}
+      List<Submission> result=new ArrayList<>();
+      try(PreparedStatement st=statement("SELECT * FROM submissions ORDER BY created_at DESC,id");ResultSet rs=st.executeQuery()){
+        while(rs.next()){
+          Submission visible=visibleSubmission(a,readSubmission(rs));
+          if(!wantedDataset.isEmpty()&&!wantedDataset.equals(visible.dataset()))continue;
+          if(!wantedOrg.isEmpty()&&visible.rows().stream().noneMatch(row->wantedOrg.equals(row.before().organizationId())))continue;
+          result.add(visible);
+        }
       }
       return List.copyOf(result);
     });
@@ -287,6 +310,18 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
   private boolean isConsumed(ActorContext a,Draft draft)throws SQLException {
     String consumed=scalar("SELECT COUNT(*) FROM submissions WHERE owner_id=? AND draft_id=? AND draft_revision=? AND state IN ('SUBMITTED','APPROVED')",a.userId(),draft.id(),draft.version());
     return consumed!=null&&Integer.parseInt(consumed)>0;
+  }
+  private boolean hasEffectiveChange(ActorContext actor,Draft draft) {
+    if(draft.rows().isEmpty())return false;
+    return draft.rows().stream().anyMatch(row->hasEffectiveChange(actor,row));
+  }
+  private boolean hasEffectiveChange(ActorContext actor,SnapshotRow row) {
+    try {
+      BusinessRecord current=store.find(actor,row.before().id());
+      DatasetSchema schema=DatasetSchema.get(current.dataset());
+      for(var entry:row.change().values().entrySet())if(!Objects.equals(entry.getValue(),schema.value(current.values(),schema.index(entry.getKey()))))return true;
+      return false;
+    } catch(RuntimeException e) { return true; }
   }
   private Draft readDraft(ResultSet rs)throws SQLException {
     return new Draft(rs.getString("id"),rs.getString("owner_id"),rs.getString("organization_id"),rs.getString("dataset"),rs.getLong("revision"),Instant.parse(rs.getString("updated_at")),rs.getString("prior_submission_id"),WorkflowCodec.rows(rs.getString("payload")));

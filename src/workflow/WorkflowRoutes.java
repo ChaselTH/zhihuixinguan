@@ -107,8 +107,8 @@ final class WorkflowRoutes {
       if(!draftMode)throw new SecurityException("只有操作员可以恢复私人草稿");
       draft=workflow.draft(actor,draftId);
       if(!draft.dataset().equals(dataset))throw new IllegalArgumentException("草稿与当前表种不一致");
-      Draft requestedDraft=draft;boolean active=workflow.drafts(actor,dataset,0,100).stream().anyMatch(candidate->candidate.id().equals(requestedDraft.id())&&candidate.version()==requestedDraft.version());
-      if(!active)throw new IllegalArgumentException("该草稿版本已提交并冻结，请从提交记录查看；退回后可恢复新的草稿");
+      boolean active=workflow.draftVersionActive(actor,draft.id(),draft.version());
+      if(!active)throw new IllegalArgumentException("该草稿版本没有活动差异，或已提交并冻结；请从提交记录查看，退回后可恢复新的草稿");
     }
     String prior=clean(query.get("prior"));
     if(draft!=null&&prior.isEmpty())prior=draft.priorSubmissionId();
@@ -155,7 +155,8 @@ final class WorkflowRoutes {
       send(x,200,pages.preview(preview,"草稿已保存，以下差异来自服务端；预览本身尚未创建待办。"));
       return;
     }
-    HttpSupport.redirect(x,editUrl(form,saved.id(),"草稿已保存，版本 "+saved.version()+"；其他分页中的已保存修改仍保留。"));
+    String unified=unifiedReturnUrl(form,saved.id());
+    HttpSupport.redirect(x,unified.isEmpty()?editUrl(form,saved.id(),"草稿已保存，版本 "+saved.version()+"；其他分页中的已保存修改仍保留。"):unified);
   }
 
   private void directPreview(HttpExchange x,WorkflowPages pages,AuthService.Session session,Map<String,String> form)throws Exception {
@@ -240,6 +241,12 @@ final class WorkflowRoutes {
     StringBuilder url=new StringBuilder("/workflow/edit?dataset=").append(HttpSupport.url(form.getOrDefault("dataset","multi")));
     for(String key:List.of("organization","from","through","page","record"))if(!clean(form.get(key)).isEmpty())url.append('&').append(key).append('=').append(HttpSupport.url(form.get(key)));
     url.append("&draft=").append(HttpSupport.url(draft)).append("&notice=").append(HttpSupport.url(notice));return url.toString();
+  }
+  private static String unifiedReturnUrl(Map<String,String> form,String draft) {
+    String target=clean(form.get("returnTo"));if(!target.startsWith("/details?"))return "";
+    StringBuilder result=new StringBuilder("/details?");String raw=target.substring("/details?".length());
+    for(String part:raw.split("&")){if(part.isEmpty())continue;String key=part.split("=",2)[0];if("draft".equals(key)||"notice".equals(key))continue;if(result.length()>9)result.append('&');result.append(part);}
+    if(result.length()>9)result.append('&');return result.append("draft=").append(HttpSupport.url(draft)).toString();
   }
 
   private boolean workflowError(HttpExchange x,WorkflowPages pages,WorkflowException e)throws IOException {

@@ -25,11 +25,12 @@ final class BusinessRoutes extends HttpSupport {
     }else if(path.equals("/internal"))html=new InternalPages(version,session).overview(data,filter,states(session,filter.rows(data).stream().limit(8).toList()));
     else{
       List<RowRef> selected=filter.rows(data);int pagesCount=Math.max(1,(selected.size()+filter.pageSize-1)/filter.pageSize);int page=Math.max(1,Math.min(pagesCount,integer(query.get("page"),1)));int start=(page-1)*filter.pageSize;
-      html=pages.details(data,filter,page,states(session,selected.subList(start,Math.min(start+filter.pageSize,selected.size()))));
+      html=pages.details(data,filter,page,states(session,selected.subList(start,Math.min(start+filter.pageSize,selected.size())),filter.draftId));
     }
     sendHtml(x,200,html);return true;
   }
-  private BusinessWorkflowState states(AuthService.Session s,List<RowRef> rows){return BusinessWorkflowState.load(store.platform,s.actor,rows);}
+  private BusinessWorkflowState states(AuthService.Session s,List<RowRef> rows){return states(s,rows,"");}
+  private BusinessWorkflowState states(AuthService.Session s,List<RowRef> rows,String draftId){return BusinessWorkflowState.load(store.platform,s.actor,rows,draftId);}
   private void history(HttpExchange x,AuthService.Session session,Map<String,String> query)throws Exception{
     BusinessRecord row=store.platform.find(session.actor,query.get("id"));int offset=integer(query.get("offset"),0);
     List<Submission> history=store.platform.workflow().recordHistory(session.actor,row.id(),offset,25);var schema=DatasetSchema.get(row.dataset());
@@ -39,25 +40,27 @@ final class BusinessRoutes extends HttpSupport {
     b.append("</tbody></table></div>").append(AccessPages.pager("/records/history?id="+PageLayout.u(row.id()),offset,history.size()));
     sendHtml(x,200,new RiskPages(version,session).shell("记录追溯",b.toString()));
   }
-  private record HistoryLine(BusinessRecord record,Submission submission,SnapshotRow row) {}
+  private record HistoryLine(Submission submission,SnapshotRow row) {}
   private void historyList(HttpExchange x,AuthService.Session session,Map<String,String> query)throws Exception {
     ActorContext actor=session.actor;String org=query.getOrDefault("organization","").strip();
-    if(!org.isEmpty()&&!Organizations.BRANCHES.containsKey(org))throw new IllegalArgumentException("查询机构无效");
+    if(!org.isEmpty())org=Organizations.resolve(org);
     if(!org.isEmpty())AccessPolicy.require(actor,AccessPolicy.Action.VIEW,org);
     if(org.isEmpty()&&!AccessPolicy.all(actor))org=actor.organizationId();
     String dataset=query.getOrDefault("dataset","").strip();if(!dataset.isEmpty())DatasetSchema.get(dataset);
+    String period=query.getOrDefault("period","").strip();
     LocalDate from=parseDate(query.get("from"),"开始日期"),through=parseDate(query.get("through"),"结束日期");
     if(from!=null&&through!=null&&from.isAfter(through))throw new IllegalArgumentException("开始日期不能晚于结束日期");
     String search=limit(query.get("search"),100);List<HistoryLine> lines=new ArrayList<>();
-    for(BusinessRecord record:store.platform.list(actor,dataset,from,through)) {
-      if(!org.isEmpty()&&!org.equals(record.organizationId()))continue;
-      String customer=DatasetSchema.get(record.dataset()).value(record.values(),DatasetSchema.get(record.dataset()).customerColumn);
-      for(Submission submission:store.platform.workflow().recordHistory(actor,record.id(),0,100)) {
-        if(from!=null&&submission.createdAt().atZone(ZoneId.of("Asia/Shanghai")).toLocalDate().isBefore(from))continue;
-        if(through!=null&&submission.createdAt().atZone(ZoneId.of("Asia/Shanghai")).toLocalDate().isAfter(through))continue;
-        if(!search.isBlank()&&!submission.ownerName().contains(search)&&!submission.ownerId().contains(search)&&!customer.contains(search))continue;
-        for(SnapshotRow row:submission.rows())if(row.before().id().equals(record.id()))lines.add(new HistoryLine(record,submission,row));
-      }
+    for(Submission submission:store.platform.workflow().history(actor,dataset,org))for(SnapshotRow row:submission.rows()){
+      BusinessRecord historical=row.before();
+      if(!org.isEmpty()&&!org.equals(historical.organizationId()))continue;
+      if(!period.isBlank()&&!period.equals(historical.period().key()))continue;
+      LocalDate created=submission.createdAt().atZone(ZoneId.of("Asia/Shanghai")).toLocalDate();
+      if(from!=null&&created.isBefore(from))continue;
+      if(through!=null&&created.isAfter(through))continue;
+      DatasetSchema schema=DatasetSchema.get(historical.dataset());String customer=schema.value(historical.values(),schema.customerColumn);
+      if(!search.isBlank()&&!submission.ownerName().contains(search)&&!submission.ownerId().contains(search)&&!customer.contains(search))continue;
+      lines.add(new HistoryLine(submission,row));
     }
     lines.sort(Comparator.comparing((HistoryLine line)->line.submission.createdAt()).reversed().thenComparing(line->line.submission.id()));
     int offset=Math.max(0,HttpSupport.integer(query.get("offset"),0));int pageSize=25;List<HistoryLine> shown=offset>=lines.size()?List.of():lines.subList(offset,Math.min(offset+pageSize,lines.size()));
@@ -68,11 +71,11 @@ final class BusinessRoutes extends HttpSupport {
     b.append("</select></label><label>清单 <select name=\"dataset\">").append(PageLayout.option("","全部清单",dataset));for(var schema:DatasetSchema.all())b.append(PageLayout.option(schema.id,schema.label,dataset));
     b.append("</select></label><label>开始日期<input name=\"from\" value=\"").append(PageLayout.e(query.get("from"))).append("\" placeholder=\"YYYY-MM-DD\"></label><label>结束日期<input name=\"through\" value=\"").append(PageLayout.e(query.get("through"))).append("\" placeholder=\"YYYY-MM-DD\"></label><label>操作人／企业<input name=\"search\" maxlength=\"100\" value=\"").append(PageLayout.e(search)).append("\"></label><button class=\"btn btn-dark\" type=\"submit\">筛选</button></form>");
     b.append("<div class=\"table-scroll\"><table class=\"data-table business-history-table\"><thead><tr><th>时间</th><th>机构</th><th>操作人</th><th>企业／清单</th><th>修改字段及前后值</th><th>状态</th><th>详情</th></tr></thead><tbody>");
-    for(HistoryLine line:shown){DatasetSchema schema=DatasetSchema.get(line.record.dataset());StringBuilder diff=new StringBuilder();for(FieldDiff field:line.row.fields())diff.append("<div><strong>").append(PageLayout.e(field.title())).append("</strong>：").append(PageLayout.e(blank(field.before()))).append(" → ").append(PageLayout.e(blank(field.after()))).append("</div>");
-      b.append("<tr><td>").append(PageLayout.e(PageLayout.time(line.submission.createdAt().toString()))).append("</td><td>").append(PageLayout.e(Organizations.label(line.record.organizationId()))).append("</td><td>").append(PageLayout.e(line.submission.ownerName())).append("</td><td>").append(PageLayout.e(schema.value(line.record.values(),schema.customerColumn))).append("<br><small>").append(PageLayout.e(schema.label)).append(" · ").append(PageLayout.e(line.record.period().key())).append("</small></td><td class=\"access-pre\">").append(diff).append("</td><td>").append(line.submission.state()==State.SUBMITTED?"待复核":line.submission.state()==State.RETURNED?"已退回":line.submission.mode()==Mode.DIRECT?"直接生效":"已通过").append("</td><td><a href=\"/workflow/submission?id=").append(PageLayout.u(line.submission.id())).append("\">提交详情</a> · <a href=\"/audit?submissionId=").append(PageLayout.u(line.submission.id())).append("\">公共审计</a></td></tr>");
+    for(HistoryLine line:shown){BusinessRecord historical=line.row.before();DatasetSchema schema=DatasetSchema.get(historical.dataset());StringBuilder diff=new StringBuilder();for(FieldDiff field:line.row.fields())diff.append("<div><strong>").append(PageLayout.e(field.title())).append("</strong>：").append(PageLayout.e(blank(field.before()))).append(" → ").append(PageLayout.e(blank(field.after()))).append("</div>");
+      b.append("<tr><td>").append(PageLayout.e(PageLayout.time(line.submission.createdAt().toString()))).append("</td><td>").append(PageLayout.e(Organizations.label(historical.organizationId()))).append("</td><td>").append(PageLayout.e(line.submission.ownerName())).append("</td><td>").append(PageLayout.e(schema.value(historical.values(),schema.customerColumn))).append("<br><small>").append(PageLayout.e(schema.label)).append(" · ").append(PageLayout.e(historical.period().key())).append("</small></td><td class=\"access-pre\">").append(diff).append("</td><td>").append(line.submission.state()==State.SUBMITTED?"待复核":line.submission.state()==State.RETURNED?"已退回":line.submission.mode()==Mode.DIRECT?"直接生效":"已通过").append("</td><td><a href=\"/workflow/submission?id=").append(PageLayout.u(line.submission.id())).append("\">提交详情</a> · <a href=\"/audit?submissionId=").append(PageLayout.u(line.submission.id())).append("\">公共审计</a></td></tr>");
     }
     if(shown.isEmpty())b.append("<tr><td colspan=\"7\" class=\"table-empty\">当前条件下暂无正式修改记录</td></tr>");
-    b.append("</tbody></table></div>");if(offset>0||offset+shown.size()<lines.size())b.append(AccessPages.pager("/records/history?organization="+PageLayout.u(org)+"&amp;dataset="+PageLayout.u(dataset)+"&amp;from="+PageLayout.u(query.get("from"))+"&amp;through="+PageLayout.u(query.get("through"))+"&amp;search="+PageLayout.u(search),offset,shown.size()));
+    b.append("</tbody></table></div>");if(offset>0||offset+shown.size()<lines.size())b.append(AccessPages.pager("/records/history?organization="+PageLayout.u(org)+"&dataset="+PageLayout.u(dataset)+"&period="+PageLayout.u(period)+"&from="+PageLayout.u(query.get("from"))+"&through="+PageLayout.u(query.get("through"))+"&search="+PageLayout.u(search),offset,shown.size()));
     sendHtml(x,200,new RiskPages(version,session).shell("支行修改记录",b.toString()));
   }
   private static LocalDate parseDate(String value,String label){if(value==null||value.isBlank())return null;try{return LocalDate.parse(value);}catch(Exception e){throw new IllegalArgumentException(label+"格式应为 YYYY-MM-DD");}}

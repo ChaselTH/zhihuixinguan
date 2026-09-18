@@ -97,8 +97,9 @@ final class RiskPages extends PageLayout {
     Draft pageDraft=operator?states.firstDraft(rows):null;
     String formAction=operator?"/workflow/draft/save":"/update-batch";
     BusinessRowPresentation cells=new BusinessRowPresentation(session);
-    StringBuilder b=new StringBuilder("<form method=\"post\" action=\"").append(formAction).append("\">").append(hidden("csrf",session.csrf)).append(hidden("requestId",UUID.randomUUID().toString())).append(rangeHidden(range)).append(filter.hidden()).append(hidden("page",""+pageNo)).append(hidden("rows",""+rows.size()));
-    if(operator)b.append(hidden("dataset",filter.dataset)).append(hidden("organization",session.actor.organizationId())).append(hidden("from","")).append(hidden("through","")).append(hidden("draftId",pageDraft==null?"":pageDraft.id())).append(hidden("draftVersion",pageDraft==null?"0":""+pageDraft.version())).append(hidden("priorSubmissionId","")).append(hidden("record",""));
+    String formClass=operator||directAllowed?"workflow-edit-form":"";
+    StringBuilder b=new StringBuilder("<form class=\"").append(formClass).append("\" method=\"post\" action=\"").append(formAction).append("\">").append(hidden("csrf",session.csrf)).append(hidden("requestId",UUID.randomUUID().toString())).append(rangeHidden(range)).append(filter.hidden()).append(hidden("page",""+pageNo)).append(hidden("rows",""+rows.size()));
+    if(operator)b.append(hidden("dataset",filter.dataset)).append(hidden("organization",session.actor.organizationId())).append(hidden("from","")).append(hidden("through","")).append(hidden("draftId",pageDraft==null?"":pageDraft.id())).append(hidden("draftVersion",pageDraft==null?"0":""+pageDraft.version())).append(hidden("priorSubmissionId","")).append(hidden("record","")).append(hidden("returnTo","/details?"+filter.query(range)+"&page="+pageNo));
     if(!rows.isEmpty()&&canEdit){
       if(operator)b.append("<div class=\"batch-edit-bar clearfix\"><span>黄色字段只保存本人草稿；提交前会显示服务端差异。</span><button class=\"btn btn-primary\" type=\"submit\" name=\"intent\" value=\"preview\">提交</button><button class=\"btn btn-light\" type=\"submit\" name=\"intent\" value=\"save\">保存草稿</button></div>");
       else b.append("<div class=\"batch-edit-bar clearfix\"><span>统一保存当前页；先预览差异，确认后才生效</span><button class=\"btn btn-primary\" type=\"submit\">保存资料补充 · 预览确认</button></div>");
@@ -122,13 +123,14 @@ final class RiskPages extends PageLayout {
     return b.append("</tbody></table></div></form>").toString();
   }
   private String historyQuery(BusinessFilter filter){
-    StringBuilder q=new StringBuilder("organization=").append(u(filter.branch));
-    if(!filter.dataset.isBlank())q.append("&amp;dataset=").append(u(filter.dataset));
-    if(!filter.period.isBlank())q.append("&amp;period=").append(u(filter.period));
+    String organization="";if(!filter.branch.isBlank())try{organization=Organizations.resolve(filter.branch);}catch(IllegalArgumentException ignored){organization=filter.branch;}
+    StringBuilder q=new StringBuilder("organization=").append(u(organization));
+    if(!filter.dataset.isBlank())q.append("&dataset=").append(u(filter.dataset));
+    if(!filter.period.isBlank())q.append("&period=").append(u(filter.period));
     return q.toString();
   }
   static String width(DatasetSchema.Field field){return field.key().contains("feedback")||field.key().equals("control_measures")||field.key().equals("warning_detail")?"col-feedback":field.title().length()>18?"col-long":"col-standard";}
   static String legend(){return "<p class=\"business-legend business-note\">浅绿色：正式已完成；白色：正式未完成；黄色：可填报字段。红色：超过反馈截止日期仍未完成；黄色填报列保持原色。草稿及待复核不计正式完成。</p>";}
-  String shell(String title,String body){return page(title,header()+"<div class=\"page-shell details-shell business-shell\">"+body+"</div>").replace("</head>","<link rel=\"stylesheet\" href=\"/assets/business.css\"></head>");}
+  String shell(String title,String body){return page(title,header()+"<div class=\"page-shell details-shell business-shell\">"+body+"</div>").replace("</head>","<link rel=\"stylesheet\" href=\"/assets/business.css\"><script src=\"/assets/workflow.js\"></script></head>");}
   private String metric(String title,String value,String note,String href){return "<a class=\"metric-card metric-link\" href=\""+href+"\"><div class=\"metric-body\"><span class=\"metric-label\">"+e(title)+"</span><strong>"+e(value)+"</strong><small>"+e(note)+"</small></div></a>";}
 }
