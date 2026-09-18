@@ -13,7 +13,7 @@ final class BusinessRoutes extends HttpSupport {
     if(path.equals("/records/history")){history(x,session,query);return true;}
     Map<String,String> input=new HashMap<>(query);if(path.equals("/internal"))input.put("dataset","cross");
     BusinessFilter filter=BusinessFilter.from(session.actor,input);List<String> months=store.months(session.actor);RangeSelection range=RangeSelection.from(query,months);
-    DashboardData data=new DashboardData(range,months,List.of(),store.readRange(range,session.actor));
+    DashboardData data=store.dashboard(range,months,session.actor);
     if(!AccessPolicy.all(session.actor))data.branches.entrySet().removeIf(e->!e.getKey().equals(Organizations.label(session.actor.organizationId())));
     RiskPages pages=new RiskPages(version,session);String html;
     if(path.equals("/"))html=pages.dashboard(data,states(session,RiskPages.homeRows(data)));

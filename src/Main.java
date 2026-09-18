@@ -49,6 +49,7 @@ public final class Main extends HttpSupport {
         if(new MaintenanceRoutes(store.platform,version).get(x,session,q))return;
         if(importing.get(x,session,q))return;
         if(new FeedbackRoutes(store,version).get(x,session,q))return;
+        if(new CompletionRuleRoutes(store.platform,version).get(x,session,q))return;
         if(path.equals("/export/progress")){var result=new AuthorizedExportService(store).exportProgress(session.actor,q);sendDownload(x,result.bytes(),result.filename());return;}
         if(path.equals("/export")){var result=new AuthorizedExportService(store).export(session.actor,q);sendDownload(x,result.bytes(),result.filename());return;}
         if(workflow.get(x,session,q))return;
@@ -75,6 +76,7 @@ public final class Main extends HttpSupport {
         if(new MaintenanceRoutes(store.platform,version).post(x,session,f))return;
         if(importing.post(x,session,f))return;
         if(new FeedbackRoutes(store,version).post(x,session,f))return;
+        if(new CompletionRuleRoutes(store.platform,version).post(x,session,f))return;
         if(workflow.post(x,session,f))return;
         switch(path){
           case "/security/ack" -> {auth.acknowledgeSafety(session,f.get("noticeVersion"));redirect(x,"/");return;}

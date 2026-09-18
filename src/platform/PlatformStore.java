@@ -21,6 +21,7 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
   private final AccessPlatform access;
   private final ImportPlatform importing;
   private final FeedbackDeadlines deadlines;
+  private final CompletionRules completionRules;
   private final MaintenancePlatform maintenance;
   static final String ACTIVE_RECORD="NOT EXISTS (SELECT 1 FROM record_deletions deleted WHERE deleted.record_id=official_records.id)";
   private final java.util.function.Consumer<String> checkpoint;
@@ -146,9 +147,11 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
     access=new AccessPlatform(this,db,workflow,clock,checkpoint);
     importing=new ImportPlatform(this,db,clock,checkpoint);
     deadlines=new FeedbackDeadlines(this,db,clock,checkpoint);
+    completionRules=new CompletionRules(this,db,clock,checkpoint);
     maintenance=new MaintenancePlatform(this,db,clock,checkpoint);
   }
   public FeedbackDeadlines deadlines(){return deadlines;}
+  public CompletionRules completionRules(){return completionRules;}
   public MaintenancePlatform maintenance(){return maintenance;}
   public ImportPlatform importing() { return importing; }
   public AccessPlatform access() { return access; }

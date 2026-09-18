@@ -8,7 +8,7 @@ final class FeedbackRoutes extends HttpSupport {
   boolean get(HttpExchange x,AuthService.Session session,Map<String,String> q)throws Exception{
     if(!x.getRequestURI().getPath().equals("/deadlines"))return false;
     var months=store.months(session.actor);var range=RangeSelection.from(q,months);
-    var data=new DashboardData(range,months,List.of(),store.readRange(range,session.actor));
+    var data=store.dashboard(range,months,session.actor);
     sendHtml(x,200,new FeedbackPages(version,session).settings(data,"yes".equals(q.get("saved"))?"反馈截止日期已更新":""));return true;
   }
   boolean post(HttpExchange x,AuthService.Session session,Map<String,String> f)throws Exception{

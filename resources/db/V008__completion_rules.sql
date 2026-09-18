@@ -1,0 +1,1 @@
+CREATE TABLE completion_rules (dataset VARCHAR(32) PRIMARY KEY, required_fields CLOB NOT NULL, revision BIGINT NOT NULL, updated_by VARCHAR(80) NOT NULL REFERENCES users(id), updated_at VARCHAR(40) NOT NULL);

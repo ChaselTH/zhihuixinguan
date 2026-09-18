@@ -41,7 +41,14 @@ public final class DatasetSchema {
   public int index(String key){for(int i=0;i<fields.size();i++)if(fields.get(i).key().equals(key))return i;return -1;}
   public boolean editable(int i){return i>=0&&i<fields.size()&&fields.get(i).editable();}
   public String value(List<String> row,int i){return i>=0&&i<row.size()&&row.get(i)!=null?row.get(i):"";}
-  public boolean complete(List<String> row){for(int i=0;i<fields.size();i++)if(editable(i)&&!value(row,i).strip().isEmpty())return true;return false;}
+  public boolean complete(List<String> row){return complete(row,Set.of());}
+  public boolean complete(List<String> row,Set<String> required){
+    if(!required.isEmpty()){
+      for(String key:required){int i=index(key);if(!editable(i))throw new IllegalArgumentException("只能设置黄色填报列");if(value(row,i).strip().isEmpty())return false;}
+      return true;
+    }
+    for(int i=0;i<fields.size();i++)if(editable(i)&&!value(row,i).strip().isEmpty())return true;return false;
+  }
   public void validateEdit(int index,String value) {
     if(!editable(index))throw new IllegalArgumentException("该字段不是黄色填报列");
     if(value==null||value.length()>10000)throw new IllegalArgumentException("填报内容不能超过 10000 字");

@@ -5,8 +5,12 @@ import xinguan.platform.WorkflowContracts.*;
 final class BusinessRowPresentation extends PageLayout {
   BusinessRowPresentation(AuthService.Session session){super("",session);}
   String status(RowRef row,BusinessWorkflowState states){
-    var state=states.get(row.record.id);boolean complete=DatasetSchema.get(row.record.dataset).complete(row.values);
+    var state=states.get(row.record.id);boolean complete=row.complete();
     StringBuilder b=new StringBuilder("<span class=\"business-badge ").append(complete?"complete":row.overdue()?"overdue":"incomplete").append("\">").append(complete?"✓ 正式已完成":row.overdue()?"! 超期反馈":"! 正式未完成").append("</span>");
+    if(!complete&&!row.record.requiredFields.isEmpty()){
+      var schema=DatasetSchema.get(row.record.dataset);var missing=schema.fields.stream().filter(f->row.record.requiredFields.contains(f.key())&&schema.value(row.values,schema.index(f.key())).isBlank()).map(DatasetSchema.Field::title).toList();
+      if(!missing.isEmpty())b.append("<small class=\"required-missing\" title=\"").append(e(String.join("；",missing))).append("\">正式值缺少 ").append(missing.size()).append(" 项必填，仍可提交</small>");
+    }
     if(row.record.feedbackDeadline!=null)b.append("<small class=\"feedback-due\">截止：").append(e(row.record.feedbackDeadline.toString())).append(complete?"":" · "+e(FeedbackTiming.remaining(row.record.feedbackDeadline,row.record.feedbackAsOf))).append("</small>");
     if(state.draft()!=null)b.append("<span class=\"business-badge draft\">我的草稿").append(state.stale()?"（需核对版本）":"").append("</span>");
     if(state.pending()!=null)b.append("<a class=\"business-badge reviewing\" href=\"/workflow/submission?id=").append(u(state.pending().id())).append("\">待复核</a>");

@@ -42,8 +42,8 @@ public class FeedbackDeadlinesTest {
       f.store.updateUser(f.root,f.div.userId(),f.div.identityRevision(),"changed",Role.DIVISION_ADMIN,"CZ",true);
       expect(SecurityException.class,()->f.store.deadlines().save(f.div,"multi",period,"2026-09-30",5));
       int records=f.store.list(f.root,null,null,null).size();f.store.close();
-      try(var c=connect(f.dir);var st=c.createStatement()){st.execute("DROP TABLE record_deletions");st.execute("DROP TABLE feedback_deadlines");st.execute("DELETE FROM schema_migrations WHERE version>=6");st.execute("DELETE FROM schema_migration_attempts WHERE version>=6");}
-      f.open();check(f.store.schemaVersion()==7&&f.store.list(f.root,null,null,null).size()==records&&f.store.deadlines().visible(f.root).isEmpty(),"V5 to V7 upgrade preserves records and starts unconfigured");
+      try(var c=connect(f.dir);var st=c.createStatement()){st.execute("DROP TABLE completion_rules");st.execute("DROP TABLE record_deletions");st.execute("DROP TABLE feedback_deadlines");st.execute("DELETE FROM schema_migrations WHERE version>=6");st.execute("DELETE FROM schema_migration_attempts WHERE version>=6");}
+      f.open();check(f.store.schemaVersion()==8&&f.store.list(f.root,null,null,null).size()==records&&f.store.deadlines().visible(f.root).isEmpty(),"V5 to V8 upgrade preserves records and starts unconfigured");
     }
     try(var f=new Fixture()){
       var row=f.record("WUJIN","multi");String period=row.period().key();var key=new FeedbackDeadlines.Key("multi",period);

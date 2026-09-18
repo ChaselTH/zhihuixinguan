@@ -74,8 +74,8 @@ public final class MaintenancePlatformTest {
   }}
   static void migration()throws Exception{try(var f=new Fixture()){
     var r=f.record("WUJIN","multi");f.store.close();
-    try(var db=connect(f.dir);var st=db.createStatement()){st.execute("DROP TABLE record_deletions");st.execute("DELETE FROM schema_migrations WHERE version=7");st.execute("DELETE FROM schema_migration_attempts WHERE version=7");}
-    f.open();check(f.store.schemaVersion()==7&&f.store.find(f.div,r.id()).id().equals(r.id()),"V6 upgrades without losing existing records");
+    try(var db=connect(f.dir);var st=db.createStatement()){st.execute("DROP TABLE completion_rules");st.execute("DROP TABLE record_deletions");st.execute("DELETE FROM schema_migrations WHERE version>=7");st.execute("DELETE FROM schema_migration_attempts WHERE version>=7");}
+    f.open();check(f.store.schemaVersion()==8&&f.store.find(f.div,r.id()).id().equals(r.id()),"V6 upgrades without losing existing records");
   }
     try(var f=new Fixture()){
       var base=f.record("WUJIN","multi");var crossing=new BusinessRecord("",0,"multi",Period.parse("20261025-20261105",""),base.organizationId(),base.values(),base.filename(),base.importedAt(),"",Map.of());

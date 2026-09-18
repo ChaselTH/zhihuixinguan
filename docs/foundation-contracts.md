@@ -1,5 +1,7 @@
 # PR0 公共基础与后续双 AI 交接约定
 
+2026-09-18 rc.10 / FEEDBACK-008：新增 `PlatformStore.completionRules()` 与 V008 必填规则表（schema 8），仅分行管理员修改。完成规则集中到 `DatasetSchema.complete(values, requiredFields)`，网页与正式导出使用 `DataStore.dashboard` 的同一规则快照；规则不作为工作流提交门槛、不修改业务版本。契约、调用、并发及升级用例见 [rc.10 必填设置](rc10-填报必填设置.md)。下方旧版“任意黄色格有值即完成”仅为未设置必填列的默认口径。
+
 2026-09-18 FEEDBACK-007 增量：新增 `WorkflowService.editableDraft(actor,id)` 精确恢复接口，`drafts` 在分页前排除已提交／已通过及空差异版本；增加 `Mode.BATCH_DIRECT` 和 `branchSnapshots(rows)`，用于分行管理员跨支行批次及真实机构子快照。业务大表携带明确草稿 ID，历史复用公共审计且按操作发生时间筛选。无新迁移，schema 7；完整契约和测试见 [维护修复说明](feedback007-维护修复.md)。以下早期 A/B 分工与测试数量是历史记录，不覆盖当前任务入口和禁止 GitHub CI 的约定。
 
 2026-09-18 rc.8：三类明细删除额外元数据列；WorkbookImporter 的旧 month/periodOverride 参数仅为签名兼容保留，不参与解析。multi/negative 必须使用每行“时间顺序”，cross 使用“违约首次出现时间”；不从文件名补值，缺失／无效整批拒绝。schema 7 不变，历史数据不自动清除或重写，见 [rc.8 说明](rc8-模板时间分期.md)。

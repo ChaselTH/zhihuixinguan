@@ -26,14 +26,18 @@ final class DataStore implements AutoCloseable {
     return new ArrayList<>(months);
   }
   private List<ImportRecord> adapt(List<BusinessRecord> rows,ActorContext actor){
-    var deadlines=platform.deadlines().visible(actor);Instant asOf=clock.instant();
+    var deadlines=platform.deadlines().visible(actor);var rules=platform.completionRules().visible(actor);Instant asOf=clock.instant();
     List<ImportRecord> result=new ArrayList<>();
     for(BusinessRecord row:rows){
       ImportRecord r=new ImportRecord();r.id=row.id();r.dataset=row.dataset();r.period=row.period().key();r.month=YearMonth.from(row.period().start()).toString();r.filename=row.filename();r.importedAt=row.importedAt();r.updatedAt=row.updatedAt();
+      r.requiredFields=rules.get(row.dataset()).requiredFields();
       var deadline=deadlines.get(new FeedbackDeadlines.Key(row.dataset(),row.period().key()));r.feedbackAsOf=asOf;if(deadline!=null){r.feedbackDeadline=deadline.dueDate();r.deadlineRevision=deadline.revision();}
       r.columns=DatasetSchema.get(row.dataset()).fields.stream().map(DatasetSchema.Field::title).toList();r.rows.add(row.values());r.versions.add(row.version());r.organizationId=row.organizationId();r.legacyExtras=row.legacyExtras();result.add(r);
     }
     return result;
+  }
+  DashboardData dashboard(RangeSelection range,List<String> months,ActorContext actor){
+    synchronized(platform){return new DashboardData(range,months,List.of(),readRange(range,actor),platform.completionRules().visible(actor));}
   }
   private void migrate()throws Exception {
     if(!Files.isDirectory(root.resolve("months")))return;

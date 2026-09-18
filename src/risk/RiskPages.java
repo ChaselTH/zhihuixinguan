@@ -14,6 +14,7 @@ final class RiskPages extends PageLayout {
     b.append(new FeedbackPages(version,currentSession).home(d));
     b.append("<section class=\"panel\"><div class=\"panel-head\"><h2>机构数据与填报进度</h2><a class=\"btn btn-light\" href=\"/progress?").append(e(d.range.queryString())).append("\">查看进度汇总</a>");
     if(AccessPolicy.all(currentSession.actor))b.append("<a class=\"btn btn-export\" href=\"/export/progress?").append(e(d.range.queryString())).append("\">批量导出填报进度</a>");
+    if(currentSession.actor.role()==Role.DIVISION_ADMIN)b.append("<a class=\"btn btn-light\" href=\"/completion-rules\">填报必填设置</a>");
     b.append("</div><div class=\"foundation-branches clearfix\">");
     for(var branch:d.branches.values()){
       b.append("<div class=\"foundation-branch\"><a class=\"branch-heading\" href=\"/branch?").append(e(d.range.queryString())).append("&amp;branch=").append(u(branch.name)).append("\"><strong>").append(e(branch.name)).append("</strong><span>查看清单 →</span></a>");
@@ -37,10 +38,11 @@ final class RiskPages extends PageLayout {
   String details(DashboardData d,BusinessFilter filter,int pageNo,BusinessWorkflowState states){
     DatasetSchema schema=DatasetSchema.get(filter.dataset);List<RowRef> all=filter.rows(d);int pages=Math.max(1,(all.size()+filter.pageSize-1)/filter.pageSize);pageNo=Math.max(1,Math.min(pages,pageNo));
     StringBuilder b=new StringBuilder(backButton("/?"+d.range.queryString())).append(rangeForm("/details",d,filter.hidden()));
-    b.append("<div class=\"details-title clearfix\"><h1>").append(e(schema.label)).append(filter.branch.isBlank()?"":" · "+e(filter.branch)).append("</h1><p>当前筛选共 ").append(all.size()).append(" 条正式记录；任意黄色填报单元格非空即完成，草稿及待复核不计入。</p><a class=\"btn btn-export\" href=\"/export?").append(e(filter.query(d.range))).append("\">导出当前筛选 Excel</a><a class=\"btn btn-light\" href=\"/records/history?").append(e(historyQuery(filter))).append("\">支行修改记录</a></div>");
+    Set<String> required=d.requiredFields.get(schema.id);
+    b.append("<div class=\"details-title clearfix\"><h1>").append(e(schema.label)).append(filter.branch.isBlank()?"":" · "+e(filter.branch)).append("</h1><p>当前筛选共 ").append(all.size()).append(" 条正式记录；").append(required.isEmpty()?"未设置必填列，任意黄色格非空即完成":"本表有 "+required.size()+" 个必填列，全部非空才算完成；空白仍可提交").append("，草稿及待复核不计入。</p><a class=\"btn btn-export\" href=\"/export?").append(e(filter.query(d.range))).append("\">导出当前筛选 Excel</a><a class=\"btn btn-light\" href=\"/records/history?").append(e(historyQuery(filter))).append("\">支行修改记录</a><a class=\"btn btn-light\" href=\"/completion-rules?dataset=").append(schema.id).append("\">").append(currentSession.actor.role()==Role.DIVISION_ADMIN?"填报必填设置":"查看填报规则").append("</a></div>");
     b.append(filterForm("/details",d,filter)).append(legend());
     String pager=pager(d,filter,pageNo,pages);b.append(pager);
-    int start=(pageNo-1)*filter.pageSize;b.append(table(filter,all.subList(start,Math.min(start+filter.pageSize,all.size())),d.range,pageNo,states)).append(pager);
+    int start=(pageNo-1)*filter.pageSize;b.append(table(filter,all.subList(start,Math.min(start+filter.pageSize,all.size())),d.range,pageNo,states,required)).append(pager);
     return shell(schema.label,b.toString());
   }
   private String pager(DashboardData d,BusinessFilter filter,int page,int pages){
@@ -57,7 +59,7 @@ final class RiskPages extends PageLayout {
       for(String name:Organizations.BRANCHES.values())b.append(option(name,name,selectedBranch));
       b.append("</select></label><button class=\"btn btn-dark\" type=\"submit\">查看</button></form><p><a class=\"btn btn-export\" href=\"/export/progress?").append(e(d.range.queryString())).append("&amp;branch=").append(u(selectedBranch)).append("\">批量导出填报进度</a></p>");
     }
-    b.append("<p>仅统计正式数据；黄色填报列任意一格非空即完成，不含草稿和待复核。</p><div class=\"table-scroll\"><table class=\"data-table progress-table\"><thead><tr><th>机构</th><th>清单</th><th>总数</th><th>已完成</th><th>未完成</th><th>完成率</th><th>明细</th></tr></thead><tbody>");
+    b.append("<p>仅统计正式数据，按当前必填规则计算；未设置必填列时任意黄色格非空即完成，不含草稿和待复核。</p><div class=\"table-scroll\"><table class=\"data-table progress-table\"><thead><tr><th>机构</th><th>清单</th><th>总数</th><th>已完成</th><th>未完成</th><th>完成率</th><th>明细</th></tr></thead><tbody>");
     int total=0,done=0;
     for(var branch:d.branches.values())if(selectedBranch.isBlank()||selectedBranch.equals(branch.name))for(String type:List.of("multi","negative","cross")){
       int n=branch.total(type),c=branch.completed(type);total+=n;done+=c;
@@ -70,7 +72,7 @@ final class RiskPages extends PageLayout {
   String branch(DashboardData d,String branch){return branch(d,branch,BusinessWorkflowState.empty());}
   String branch(DashboardData d,String branch,BusinessWorkflowState states){
     StringBuilder b=new StringBuilder(backButton("/?"+d.range.queryString())).append(rangeForm("/branch",d,hidden("branch",branch))).append("<h1>").append(e(branch)).append(" · 数据清单</h1>").append(legend());
-    for(DatasetSchema schema:DatasetSchema.all()){List<RowRef> rows=d.filtered(schema.id,"",branch);long done=rows.stream().filter(r->schema.complete(r.values)).count();
+    for(DatasetSchema schema:DatasetSchema.all()){List<RowRef> rows=d.filtered(schema.id,"",branch);long done=rows.stream().filter(RowRef::complete).count();
       b.append("<section class=\"panel\"><div class=\"panel-head\"><h2>").append(e(schema.label)).append(" · 已完成 ").append(done).append(" / ").append(rows.size()).append("</h2><a class=\"btn btn-dark\" href=\"").append(detailUrl(d.range,schema.id,branch)).append("\">查看及填写全部</a></div>").append(preview(schema.id,rows.subList(0,Math.min(8,rows.size())),states,d.range)).append("</section>");
     }return shell(branch,b.toString());
   }
@@ -89,7 +91,7 @@ final class RiskPages extends PageLayout {
     if(refs.isEmpty())b.append("<tr><td colspan=\"4\" class=\"table-empty\">当前条件下暂无正式记录</td></tr>");
     return b.append("</tbody></table></div>").toString();
   }
-  private String table(BusinessFilter filter,List<RowRef> rows,RangeSelection range,int pageNo,BusinessWorkflowState states){
+  private String table(BusinessFilter filter,List<RowRef> rows,RangeSelection range,int pageNo,BusinessWorkflowState states,Set<String> required){
     DatasetSchema schema=DatasetSchema.get(filter.dataset);var session=currentSession;boolean directAllowed=AccessPolicy.can(session.actor,AccessPolicy.Action.DIRECT_EDIT,session.actor.organizationId());
     boolean singleOrganization=rows.stream().map(r->r.record.organizationId).distinct().count()<=1&&rows.stream().allMatch(r->Organizations.BRANCHES.containsKey(r.record.organizationId));
     boolean operator=session.actor.role()==Role.OPERATOR;
@@ -108,7 +110,7 @@ final class RiskPages extends PageLayout {
     if(directAllowed&&!singleOrganization&&session.actor.role()!=Role.DIVISION_ADMIN)b.append("<p class=\"business-note\">当前账号只能在所属支行范围内统一填写。</p>");
     if(canEdit)b.append("<p class=\"business-note\">翻页、筛选或离开前请先保存；未保存输入离开前会提示。黄色列包含当前草稿值，统计仍只采用正式值。</p><noscript><p>浏览器未启用脚本，请先保存再翻页或离开，以免丢失输入。</p></noscript>");
     b.append("<div class=\"table-scroll\"><table class=\"data-table detail-table\"><thead><tr><th class=\"business-status\">正式状态／流程入口</th>");
-    for(var field:schema.fields)b.append("<th class=\"").append(field.editable()?"editable-head ":"").append(width(field)).append("\">").append(e(field.title())).append("</th>");
+    for(var field:schema.fields)b.append("<th class=\"").append(field.editable()?"editable-head ":"").append(width(field)).append("\">").append(e(field.title())).append(required.contains(field.key())?" <span class=\"required-marker\" title=\"计入完成的必填项；空白仍可提交\">必填</span>":"").append("</th>");
     b.append("</tr></thead><tbody>");
     for(int i=0;i<rows.size();i++){RowRef row=rows.get(i);b.append("<tr class=\"").append(row.rowClass()).append("\"><td class=\"business-status\">").append(cells.status(row,states)).append("<div class=\"business-actions\">").append(cells.actions(row,states,range)).append("</div></td>");
       SnapshotRow savedRow=pageDraft==null?null:pageDraft.rows().stream().filter(saved->saved.before().id().equals(row.record.id)).findFirst().orElse(null);
