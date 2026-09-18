@@ -18,9 +18,41 @@ public final class WorkflowPlatformTest {
       draftsAndConfirmation(f);approvalAndNotifications(f);conflictsAndReturns(f);directAndQueries(f);
       rollback(f);concurrency(f);identityChanges(f);restart(f);
     }
-    migrations();
+    crossBranchAtomic();migrations();
     System.out.println("WORKFLOW_PLATFORM_OK assertions="+assertions+" real synthetic identities, concurrent requests, injected failures, restart and V1 upgrade");
   }
+  static void crossBranchAtomic()throws Exception{try(Fixture f=new Fixture()){
+    var w=f.record("WUJIN","multi");var j=f.record("JINTAN","multi");
+    var changes=List.of(edit(w,"ONLY-WUJIN"),edit(j,"ONLY-JINTAN"));
+    denied(()->f.w().previewDirect(f.branch,"multi",changes));denied(()->f.w().previewDirect(f.op,"multi",changes));denied(()->f.w().previewDirect(f.root,"multi",changes));
+    var preview=f.w().previewDirect(f.div,"multi",changes);String request=id();
+    check(preview.mode()==Mode.BATCH_DIRECT&&branchSnapshots(preview.rows()).size()==2,"explicit batch envelope carries two real branch sub-snapshots");
+    int audits=f.store.diagnostics().get("audit_events"),submissions=f.store.diagnostics().get("submissions");long notices=f.n().unreadCount(f.div),otherNotices=f.n().unreadCount(f.otherReview);
+    for(String point:List.of("official-row-written","notification-written","confirmation-complete")){
+      f.fail(point,point.equals("official-row-written")?2:1);
+      code(Code.TRANSACTION_FAILED,()->f.w().confirm(f.div,preview.id(),request));
+      check(f.store.find(f.div,w.id()).version()==1&&f.store.find(f.div,j.id()).version()==1,"multi-branch rollback includes every row: "+point);
+      check(f.store.diagnostics().get("audit_events")==audits&&f.store.diagnostics().get("submissions")==submissions&&f.n().unreadCount(f.div)==notices,"multi-branch audit/snapshot/notice rollback: "+point);
+    }
+    var results=race(()->f.w().confirm(f.div,preview.id(),request),()->f.w().confirm(f.div,preview.id(),request));
+    check(results.stream().allMatch(Submission.class::isInstance),"concurrent multi-branch same request safely replays");
+    var submitted=(Submission)results.get(0);check(((Submission)results.get(1)).id().equals(submitted.id()),"same multi-branch immutable batch id");
+    check(f.store.find(f.div,w.id()).version()==2&&f.store.find(f.div,j.id()).version()==2,"exactly once updates both branches");
+    check(f.n().unreadCount(f.div)==notices+1&&f.n().unreadCount(f.otherReview)==otherNotices,"multi-branch direct notice only to submitter");
+    for(var actor:List.of(f.op,f.branch,f.review,f.otherOp,f.otherReview)){
+      var clipped=f.w().submission(actor,submitted.id());check(clipped.rows().size()==1&&clipped.rows().get(0).before().organizationId().equals(actor.organizationId()),"mixed submission cropped to actual branch");
+      var filter=new AccessPlatform.AuditFilter("business",actor.organizationId(),"multi","",null,null);
+      check(f.store.access().auditForSubmission(actor,submitted.id(),filter,0,100).stream().allMatch(e->e.organization().equals(actor.organizationId())),"shared audit stays row scoped");
+      check(f.w().auditTrail(actor,submitted.id()).stream().allMatch(e->e.recordId().equals(actor.organizationId().equals("WUJIN")?w.id():j.id())),"workflow audit cannot leak other branch row or division summary");
+    }
+    var outsider=f.user(Role.OPERATOR,"LIYANG");denied(()->f.w().submission(outsider,submitted.id()));
+    check(f.w().submissions(outsider,Query.firstPage()).isEmpty(),"unrelated branch has no mixed-batch list entry");
+    var currentW=f.store.find(f.div,w.id());var currentJ=f.store.find(f.div,j.id());
+    var stale=f.w().previewDirect(f.div,"multi",List.of(edit(currentW,"NEXT-W"),edit(currentJ,"NEXT-J")));
+    f.w().confirm(f.branch,f.w().previewDirect(f.branch,"multi",List.of(edit(currentW,"OTHER-WRITER"))).id(),id());
+    code(Code.VERSION_CONFLICT,()->f.w().confirm(f.div,stale.id(),id()));
+    check(value(f.store.find(f.div,j.id())).equals("ONLY-JINTAN"),"one stale branch blocks entire batch, no partial second branch write");
+  }}
   static void draftsAndConfirmation(Fixture f)throws Exception {
     var r=f.record("WUJIN","multi");String privateText="PRIVATE_DRAFT_ONLY_测试字段";
     var change=edit(r,privateText);String request=id();
@@ -134,7 +166,7 @@ public final class WorkflowPlatformTest {
     denied(()->f.w().previewDirect(f.branch,"multi",List.of(edit(j,"bad"))));
     var crossPreview=f.w().previewDirect(f.div,"multi",List.of(edit(r,"one"),edit(j,"two")));
     check(crossPreview.organizationId().equals(Organizations.DIVISION)&&crossPreview.rows().size()==2,"division direct preview spans selected branches");
-    var crossSubmission=f.w().confirm(f.div,crossPreview.id(),id());check(crossSubmission.mode()==Mode.DIRECT,"cross-branch direct confirmation is one immutable submission");
+    var crossSubmission=f.w().confirm(f.div,crossPreview.id(),id());check(crossSubmission.mode()==Mode.BATCH_DIRECT,"cross-branch confirmation uses explicit immutable batch type, not an ordinary CZ submission");
     var clearCross=f.w().previewDirect(f.div,"multi",List.of(edit(f.store.find(f.div,r.id()),"")));f.w().confirm(f.div,clearCross.id(),id());check(value(f.store.find(f.div,r.id())).isEmpty(),"division direct batch can clear a selected branch value");
     var directBase=f.store.find(f.branch,r.id());var direct=f.w().previewDirect(f.branch,"multi",List.of(edit(directBase,"initial")));
     f.store.publishDirect(f.div,List.of(edit(directBase,"changed after preview")),id());

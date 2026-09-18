@@ -137,7 +137,7 @@ public final class AccessPlatform {
   private List<AuditEntry> auditQuery(ActorContext a,AuditFilter filter,int offset,int limit,String submissionId) {
     return call(a,()->{
       page(offset,limit);var selected=auditSelection(a,filter,submissionId);
-      String sql="SELECT e.*,o.dataset,o.cell_data,w.submission_id"+selected.sql();List<Object> args=new ArrayList<>(selected.args());
+      String sql="SELECT e.*,COALESCE(o.dataset,s.dataset) AS dataset,o.cell_data,w.submission_id"+selected.sql();List<Object> args=new ArrayList<>(selected.args());
       sql+=" ORDER BY CAST(e.event_at AS TIMESTAMP WITH TIME ZONE) DESC,e.id LIMIT ? OFFSET ?";args.add(limit);args.add(offset);
       List<AuditEntry> result=new ArrayList<>();
       try(PreparedStatement st=statement(sql,args.toArray());ResultSet rs=st.executeQuery()){while(rs.next()) {
@@ -153,7 +153,7 @@ public final class AccessPlatform {
       boolean security=!category.equals("business");
       if(security&&!PlatformStore.isManager(a))throw new SecurityException("没有账号管理记录查看权限");
       if(filter.from()!=null&&filter.through()!=null&&filter.from().isAfter(filter.through()))throw new IllegalArgumentException("开始日期不能晚于结束日期");
-      String sql=" FROM audit_events e LEFT JOIN official_records o ON o.id=e.record_id LEFT JOIN workflow_audit_links w ON w.event_id=e.id WHERE 1=1";
+      String sql=" FROM audit_events e LEFT JOIN official_records o ON o.id=e.record_id LEFT JOIN workflow_audit_links w ON w.event_id=e.id LEFT JOIN submissions s ON s.id=w.submission_id WHERE 1=1";
       List<Object> args=new ArrayList<>();
       if(!submissionId.isEmpty()){sql+=" AND w.submission_id=?";args.add(submissionId);}
       String types="(e.action LIKE 'USER_%' OR e.action LIKE 'PASSWORD_%' OR e.action LIKE 'ACCESS_%' OR e.action LIKE 'SECURITY_%' OR e.action LIKE 'NOTICE_%' OR e.action='AUDIT_PURGE')";
@@ -161,10 +161,10 @@ public final class AccessPlatform {
       if(a.role()!=Role.SUPER_ADMIN)sql+=" AND e.actor_role<>'SUPER_ADMIN'";
       if(!AccessPolicy.all(a)){sql+=" AND e.organization_id=?";args.add(a.organizationId());}
       if(!blank(filter.organization()).isEmpty()){organization(filter.organization());AccessPolicy.require(a,AccessPolicy.Action.VIEW,filter.organization());sql+=" AND e.organization_id=?";args.add(filter.organization());}
-      if(!blank(filter.dataset()).isEmpty()){DatasetSchema.get(filter.dataset());sql+=" AND o.dataset=?";args.add(filter.dataset());}
+      if(!blank(filter.dataset()).isEmpty()){DatasetSchema.get(filter.dataset());sql+=" AND COALESCE(o.dataset,s.dataset)=?";args.add(filter.dataset());}
       if(filter.from()!=null){sql+=" AND e.event_at>=?";args.add(boundary(filter.from()));}
       if(filter.through()!=null){sql+=" AND e.event_at<?";args.add(boundary(filter.through().plusDays(1)));}
-      String search=text(filter.search(),100);if(!search.isEmpty()){sql+=" AND (LOCATE(?,e.actor_name)>0 OR e.record_id=? OR e.request_id=? OR w.submission_id=? OR e.action=?)";args.addAll(Collections.nCopies(5,search));}
+      String search=text(filter.search(),100);if(!search.isEmpty()){sql+=" AND (LOCATE(?,e.actor_name)>0 OR e.record_id=? OR e.request_id=? OR w.submission_id=? OR e.action=? OR (o.id IS NULL AND EXISTS (SELECT 1 FROM submission_items si WHERE si.submission_id=w.submission_id AND si.record_id=?)))";args.addAll(Collections.nCopies(6,search));}
       return new AuditSelection(sql,args);
   }
   /** Exact, bounded targets shared with the visible audit filter; called inside the maintenance transaction. */

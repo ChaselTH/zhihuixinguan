@@ -47,6 +47,7 @@ run('java',['-Dfile.encoding=UTF-8','-cp',runtimeCp,'Main','--root',app,'--write
 if(args.includes('--test')){
   run(process.execPath,[path.join(root,'tests','identity-form.test.mjs')]);
   run(process.execPath,[path.join(root,'tests','business-interactions.test.mjs')]);
+  run(process.execPath,[path.join(root,'tests','workflow-interactions.test.mjs')]);
   const tests=await fs.mkdtemp(path.join(build,'tests-'));
   run('javac',['-encoding','UTF-8','--release','17','-cp',runtimeCp,'-d',tests,...await sources(path.join(root,'tests'))]);
   run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'FoundationTest',...args.includes('--user-template')?[path.join(root,'智慧信管表头示例.et')]:[]]);
@@ -60,6 +61,7 @@ if(args.includes('--test')){
   run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'xinguan.platform.ImportPlatformTest']);
   run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'ImportWorkbookTest']);
   run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'BusinessViewTest']);
+  run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'Feedback007RegressionTest']);
   run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'xinguan.platform.FeedbackDeadlinesTest']);
   run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'FeedbackViewTest']);
   run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'xinguan.platform.MaintenancePlatformTest']);

@@ -10,7 +10,7 @@ final class BusinessRowPresentation extends PageLayout {
     if(row.record.feedbackDeadline!=null)b.append("<small class=\"feedback-due\">截止：").append(e(row.record.feedbackDeadline.toString())).append(complete?"":" · "+e(FeedbackTiming.remaining(row.record.feedbackDeadline,row.record.feedbackAsOf))).append("</small>");
     if(state.draft()!=null)b.append("<span class=\"business-badge draft\">我的草稿").append(state.stale()?"（需核对版本）":"").append("</span>");
     if(state.pending()!=null)b.append("<a class=\"business-badge reviewing\" href=\"/workflow/submission?id=").append(u(state.pending().id())).append("\">待复核</a>");
-    else if(state.latest()!=null)b.append("<a class=\"business-badge history\" href=\"/workflow/submission?id=").append(u(state.latest().id())).append("\">最近提交：").append(state.latest().state()==State.RETURNED?"已退回":state.latest().mode()==Mode.DIRECT?"直接生效":"已通过").append("</a>");
+    else if(state.latest()!=null)b.append("<a class=\"business-badge history\" href=\"/workflow/submission?id=").append(u(state.latest().id())).append("\">最近提交：").append(state.latest().state()==State.RETURNED?"已退回":state.latest().mode()!=Mode.REVIEW?"直接生效":"已通过").append("</a>");
     return b.toString();
   }
   String actions(RowRef row,BusinessWorkflowState states,RangeSelection range){
@@ -18,11 +18,6 @@ final class BusinessRowPresentation extends PageLayout {
     // Editing and trace are now page-level actions. Keep only the necessary review
     // queue link here; never expose another branch's row or private draft contents.
     if(state.pending()!=null)b.append("<a href=\"/workflow/submission?id=").append(u(state.pending().id())).append("\">").append(actor.role()==Role.REVIEWER?"去复核":"查看待复核单").append("</a>");
-    b.append("<span class=\"business-row-ref\" data-record=\"record=").append(u(row.record.id));
-    if(state.draft()!=null)b.append("&amp;draft=").append(u(state.draft().id()));
-    b.append("\">record=").append(u(row.record.id));
-    if(state.draft()!=null)b.append("&amp;draft=").append(u(state.draft().id()));
-    b.append("</span>");
     return b.toString();
   }
 }

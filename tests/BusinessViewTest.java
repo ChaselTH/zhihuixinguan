@@ -22,8 +22,8 @@ public final class BusinessViewTest {
         var own=BusinessWorkflowState.load(platform,operator,List.of(row));check(own.get(row.record.id).draft()!=null,"own active draft visible");
         for(var role:List.of(root,division,peer,reviewer,branch))check(BusinessWorkflowState.load(platform,role,List.of(row)).get(row.record.id).draft()==null,"private draft existence isolated");
         RowRef scopedRow=row;expect(SecurityException.class,()->BusinessWorkflowState.load(platform,other,List.of(scopedRow)));
-        var html=pages(operator).details(dashboard,filter(operator,dataset,"all"),1,own);check(html.contains("我的草稿")&&html.contains("B2-PRIVATE-CONTENT"),"owner restores private draft in unified table while other roles remain isolated");
-        check(html.contains("record="+row.record.id)&&html.contains("draft="+draft.id())&&!html.contains("查看追溯"),"row-level edit/trace actions are replaced by page-level controls");
+        var html=pages(operator).details(dashboard,filter(operator,dataset,"all").withDraft(draft.id()),1,own.editing(draft,false));check(html.contains("我的草稿")&&html.contains("B2-PRIVATE-CONTENT"),"owner restores selected private draft in unified table while other roles remain isolated");
+        check(html.contains("name=\"draftId\" value=\""+draft.id()+"\"")&&html.contains("支行修改记录")&&!html.contains("查看追溯")&&!html.contains("business-row-ref"),"real page-level controls replace row edit/trace actions without hidden test markers");
         String detailTable=html.substring(html.indexOf("<table class=\"data-table detail-table\">"));detailTable=detailTable.substring(0,detailTable.indexOf("</table>"));
         check(!detailTable.contains("期次／历史保留信息")&&detailTable.split("<th[ >]",-1).length-1==schema.width()+1,"detail has only template columns plus existing workflow action column: "+dataset);
         String body=detailTable.substring(detailTable.indexOf("<tbody>"));check(body.split("<td[ >]",-1).length-1==schema.width()+1,"row cells align after extra metadata column removed");

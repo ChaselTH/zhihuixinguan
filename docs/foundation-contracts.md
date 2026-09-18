@@ -1,5 +1,7 @@
 # PR0 公共基础与后续双 AI 交接约定
 
+2026-09-18 FEEDBACK-007 增量：新增 `WorkflowService.editableDraft(actor,id)` 精确恢复接口，`drafts` 在分页前排除已提交／已通过及空差异版本；增加 `Mode.BATCH_DIRECT` 和 `branchSnapshots(rows)`，用于分行管理员跨支行批次及真实机构子快照。业务大表携带明确草稿 ID，历史复用公共审计且按操作发生时间筛选。无新迁移，schema 7；完整契约和测试见 [维护修复说明](feedback007-维护修复.md)。以下早期 A/B 分工与测试数量是历史记录，不覆盖当前任务入口和禁止 GitHub CI 的约定。
+
 2026-09-18 rc.8：三类明细删除额外元数据列；WorkbookImporter 的旧 month/periodOverride 参数仅为签名兼容保留，不参与解析。multi/negative 必须使用每行“时间顺序”，cross 使用“违约首次出现时间”；不从文件名补值，缺失／无效整批拒绝。schema 7 不变，历史数据不自动清除或重写，见 [rc.8 说明](rc8-模板时间分期.md)。
 
 2026-09-18 rc.7：schema 7 新增 record_deletions，原迁移不改；PlatformStore.maintenance() 提供超管审计清理及分行管理员按月份删除的只读预览／确认，列表和导出统一排除已删除正式行。所有非超管的审计读取排除事件 actor_role=SUPER_ADMIN；支行账号审计改为本支行全部非超管操作。权限、签名、回滚和兼容说明见 [rc.7 契约](rc7-操作记录与月份删除.md)。

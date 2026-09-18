@@ -15,7 +15,7 @@ final class BusinessHttpTest {
     var confirm=HttpSmokeTest.hidden(uploaded.body());confirm.put("csrf",csrf());confirm.put("mode","saved");check(post("/imports/confirm",confirm).statusCode()==303,"A2 import feeds B2 views");
     String ownId=recordId(get("/details?dataset=multi&month=2026-09&q=B2-HTTP-FOCUS").body());String foreignId=recordId(get("/details?dataset=multi&month=2026-09&q=B2-HTTP-FOREIGN").body());
     use(operator);String url="/details?dataset=multi&scope=quarter&year=2026&quarter=3&q=B2-HTTP-FOCUS&completion=incomplete";String list=get(url).body();
-    check(list.contains("填写并提交")&&list.contains("record="+ownId)&&!list.contains("B2-HTTP-FOREIGN"),"scoped focused workflow action on list");
+    check(list.contains("/workflow/draft/save")&&list.contains("value=\""+ownId+"\"")&&!list.contains("B2-HTTP-FOREIGN")&&!list.contains("business-row-ref"),"scoped real in-table editor without per-row action markers");
     check(get("/assets/business.css").statusCode()==200,"local B2 styles available");check(get("/details?completion=invalid").statusCode()==400,"unknown completion filter fails closed");
     String focus="/workflow/edit?dataset=multi&organization=WUJIN&from=2026-09-01&through=2026-09-30&record="+ownId;
     String editor=get(focus).body();var form=WorkflowIntegrationHttpTest.form(editor,"/workflow/draft/save");check(form.get("rows").equals("1")&&form.get("id0").equals(ownId),"row focus never opens unrelated first page");

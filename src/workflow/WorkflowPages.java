@@ -13,8 +13,8 @@ final class WorkflowPages extends PageLayout {
   String home(List<Draft> drafts,List<Submission> submissions,List<Submission> pending,String notice) {
     ActorContext actor=session.actor;StringBuilder b=new StringBuilder(message(notice,false));
     b.append("<div class=\"workflow-hero clearfix\"><div><span class=\"workflow-eyebrow\">WORKFLOW DESK</span><h1>工作流工作台</h1><p>").append(e(roleGuide(actor.role()))).append("</p></div>");
-    if(actor.role()==Role.OPERATOR)b.append("<a class=\"btn btn-primary\" href=\"/workflow/edit?dataset=multi\">开始或继续填报</a>");
-    else if(canDirect(actor))b.append("<a class=\"btn btn-primary\" href=\"/workflow/edit?dataset=multi\">预览直接修改</a>");
+    if(actor.role()==Role.OPERATOR)b.append("<a class=\"btn btn-primary\" href=\"/details?dataset=multi\">开始或继续填报</a>");
+    else if(canDirect(actor))b.append("<a class=\"btn btn-primary\" href=\"/details?dataset=multi\">预览直接修改</a>");
     b.append("</div><div class=\"workflow-metrics clearfix\">")
       .append(metric("最近草稿",drafts.size(),actor.role()==Role.OPERATOR?"最多显示 10 条；全部草稿见列表":"当前角色不使用草稿"))
       .append(metric("近期提交",submissions.size(),"正式快照与状态"))
@@ -30,6 +30,7 @@ final class WorkflowPages extends PageLayout {
     return editor(dataset,organization,from,through,page,pages,total,rows,draft,prior,notice,"");
   }
   String editor(String dataset,String organization,LocalDate from,LocalDate through,int page,int pages,int total,List<BusinessRecord> rows,Draft draft,String prior,String notice,String focus) {
+    if(draft!=null)return draftEditor(draft,rows,page,pages,total,prior,notice);
     DatasetSchema schema=DatasetSchema.get(dataset);boolean draftMode=session.actor.role()==Role.OPERATOR;
     Map<String,SnapshotRow> saved=new LinkedHashMap<>();if(draft!=null)for(SnapshotRow row:draft.rows())saved.put(row.before().id(),row);
     StringBuilder b=new StringBuilder(message(notice,false));
@@ -76,14 +77,17 @@ final class WorkflowPages extends PageLayout {
   }
 
   String preview(Preview preview,String notice) {
+    return preview(preview,notice,"");
+  }
+  String preview(Preview preview,String notice,String returnUrl) {
     DatasetSchema schema=DatasetSchema.get(preview.dataset());int changes=countChanges(preview.rows());StringBuilder b=new StringBuilder(message(notice,false));
     b.append("<div class=\"workflow-title clearfix\"><div><span class=\"workflow-eyebrow\">SERVER PREVIEW</span><h1>确认本次修改</h1><p>差异由服务端根据正式记录生成；确认只提交预览编号，不回传替换内容。</p></div><div class=\"workflow-version\"><span>变更字段</span><strong>").append(changes).append("</strong><small>").append(preview.rows().size()).append(" 条记录</small></div></div>");
     b.append("<div class=\"workflow-callout warning\"><strong>确认有效期至 ").append(e(dateTime(preview.expiresAt()))).append("</strong><br>预览不会创建待办；正式值仍未改变。草稿或正式记录发生变化后必须重新预览。</div>");
     b.append(diffTable(preview.rows()));
     b.append("<form class=\"workflow-confirm\" method=\"post\" action=\"/workflow/confirm\">").append(hidden("csrf",session.csrf)).append(hidden("previewId",preview.id())).append(hidden("requestId",requestId("confirm",preview.id())))
       .append("<div><strong>").append(preview.mode()==Mode.REVIEW?"提交复核":"直接生效").append("</strong><p>").append(preview.mode()==Mode.REVIEW?"确认后生成不可变提交单，等待本支行复核员处理。":"确认后正式值、审计和通知将在同一事务中完成，无需他人批准。").append("</p></div><button class=\"btn btn-primary\" type=\"submit\">确认").append(preview.mode()==Mode.REVIEW?"提交复核":"并使修改生效").append("</button></form>");
-    String back=preview.mode()==Mode.REVIEW?"/workflow/edit?dataset="+u(preview.dataset())+"&amp;draft="+u(preview.draftId()):"/workflow/edit?dataset="+u(preview.dataset())+"&amp;organization="+u(preview.organizationId());
-    b.append("<p class=\"workflow-back\"><a href=\"").append(back).append("\">返回修改</a></p>");
+    String back=!returnUrl.isEmpty()?returnUrl:preview.mode()==Mode.REVIEW?"/workflow/edit?dataset="+u(preview.dataset())+"&draft="+u(preview.draftId()):"/details?dataset="+u(preview.dataset());
+    b.append("<p class=\"workflow-back\"><a ").append(preview.mode()!=Mode.REVIEW?"data-back=\"yes\" ":"").append("href=\"").append(e(back)).append("\">返回修改</a></p>");
     return shell("确认修改","preview",b.toString());
   }
 
@@ -124,12 +128,41 @@ final class WorkflowPages extends PageLayout {
   private String shell(String title,String active,String body) {
     StringBuilder content=new StringBuilder(header()).append("<div class=\"workflow-shell\"><div class=\"workflow-nav clearfix\"><div><strong>工作流</strong><span>").append(e(PageLayout.roleName(session.actor.role()))).append(" · ").append(e(Organizations.label(session.actor.organizationId()))).append("</span></div><div class=\"workflow-tabs\">")
       .append(tab("/workflow","工作台","home",active));
-    if(session.actor.role()==Role.OPERATOR||canDirect(session.actor))content.append(tab("/workflow/edit?dataset=multi",session.actor.role()==Role.OPERATOR?"草稿填报":"直接修改","edit",active));
+    if(session.actor.role()==Role.OPERATOR||canDirect(session.actor))content.append(tab("/details?dataset=multi",session.actor.role()==Role.OPERATOR?"草稿填报":"直接修改","edit",active));
     if(session.actor.role()==Role.OPERATOR)content.append(tab("/workflow/drafts","全部草稿","drafts",active));
     content.append(tab("/workflow/submissions",session.actor.role()==Role.OPERATOR?"我的提交":"提交记录","submissions",active));
     if(session.actor.role()==Role.REVIEWER)content.append(tab("/workflow/reviews","复核待办","reviews",active));
     content.append("</div></div>");if(!active.equals("home"))content.append(backButton("/workflow"));content.append(body).append("</div>");
     String html=page(title,content.toString());return html.replace("<link rel=\"stylesheet\" href=\"/assets/foundation.css\">","<link rel=\"stylesheet\" href=\"/assets/foundation.css\"><link rel=\"stylesheet\" href=\"/assets/workflow.css\"><script src=\"/assets/workflow.js\"></script>");
+  }
+
+  private String draftEditor(Draft draft,List<BusinessRecord> rows,int page,int pages,int total,String prior,String notice){
+    DatasetSchema schema=DatasetSchema.get(draft.dataset());Map<String,SnapshotRow> saved=new HashMap<>();for(var row:draft.rows())saved.put(row.before().id(),row);
+    StringBuilder b=new StringBuilder(message(notice,false)).append("<div class=\"workflow-title clearfix\"><h1>我的修改 · ").append(e(schema.label)).append("</h1><p>仅显示本人修改过的行和字段；正式统计不含草稿。版本 ").append(draft.version()).append(" · 全部 ").append(total).append(" 条差异</p></div>");
+    b.append("<p><a class=\"btn btn-light\" href=\"/details?dataset=").append(u(draft.dataset())).append("&amp;draft=").append(u(draft.id())).append("\">返回完整清单继续填写</a></p>");
+    if(!prior.isEmpty())b.append("<p class=\"workflow-callout warning\">由退回单修订，重新提交会保留原单历史。</p>");
+    b.append("<form class=\"workflow-edit-form\" method=\"post\" action=\"/workflow/draft/save\">").append(hidden("csrf",session.csrf)).append(hidden("requestId",UUID.randomUUID().toString()))
+      .append(hidden("dataset",draft.dataset())).append(hidden("organization",draft.organizationId())).append(hidden("page",""+page)).append(hidden("rows",""+rows.size()))
+      .append(hidden("draftId",draft.id())).append(hidden("draftVersion",""+draft.version())).append(hidden("priorSubmissionId",prior)).append(hidden("fieldsMode","differences"));
+    if(!rows.isEmpty())b.append(actionBar(true));
+    b.append("<div class=\"table-scroll workflow-table-scroll\"><table class=\"workflow-table workflow-draft-diff\"><thead><tr><th>企业／来源时间</th><th>修改字段</th><th>原正式值</th><th>我的草稿</th></tr></thead><tbody>");
+    for(int i=0;i<rows.size();i++){
+      BusinessRecord current=rows.get(i);SnapshotRow row=saved.get(current.id());boolean first=true;
+      for(FieldDiff diff:row.fields()){
+        var field=schema.fields.get(schema.index(diff.key()));b.append("<tr><td class=\"workflow-company\">");
+        if(first){b.append(hidden("id"+i,current.id())).append(hidden("version"+i,""+row.change().expectedVersion()));first=false;}
+        b.append(e(schema.value(current.values(),schema.customerColumn))).append("<br><small>").append(e(row.before().period().key())).append("</small>");
+        if(current.version()!=row.change().expectedVersion())b.append("<span class=\"workflow-row-warning\">正式记录已变化，请核对版本</span>");
+        b.append("</td><td>").append(e(diff.title())).append("</td><td class=\"workflow-before\">").append(e(blankLabel(diff.before()))).append("</td><td class=\"workflow-editable-cell\">");
+        String name="value_"+i+"_"+diff.key();
+        if(field.options().isEmpty())b.append("<textarea rows=\"3\" name=\"").append(e(name)).append("\">").append(e(diff.after())).append("</textarea>");
+        else{b.append("<select name=\"").append(e(name)).append("\">").append(option("","请选择",diff.after()));if(!diff.after().isBlank()&&!field.options().contains(diff.after()))b.append(option(diff.after(),diff.after()+"（历史值）",diff.after()));for(String choice:field.options())b.append(option(choice,choice,diff.after()));b.append("</select>");}
+        b.append("</td></tr>");
+      }
+    }
+    if(rows.isEmpty())b.append("<tr><td colspan=\"4\" class=\"workflow-empty-cell\">没有未提交差异，已从活动草稿列表移除。</td></tr>");
+    b.append("</tbody></table></div></form>").append(pager(editLink(draft.dataset(),draft.organizationId(),null,null,draft.id(),prior),page,pages,total));
+    return shell("我的草稿差异","edit",b.toString());
   }
 
   private String editorFilter(String dataset,String organization,LocalDate from,LocalDate through,Draft draft,String prior) {
@@ -150,7 +183,7 @@ final class WorkflowPages extends PageLayout {
   }
 
   private String draftPanel(List<Draft> drafts) {
-    StringBuilder b=new StringBuilder("<section class=\"workflow-panel\"><div class=\"workflow-panel-head clearfix\"><div><span>PRIVATE</span><h2>我的草稿</h2></div><a href=\"/workflow/drafts\">查看全部草稿</a> <a href=\"/workflow/edit?dataset=multi\">新建草稿</a></div><div class=\"workflow-list\">");
+    StringBuilder b=new StringBuilder("<section class=\"workflow-panel\"><div class=\"workflow-panel-head clearfix\"><div><span>PRIVATE</span><h2>我的草稿</h2></div><a href=\"/workflow/drafts\">查看全部草稿</a> <a href=\"/details?dataset=multi&amp;draft=new\">新建草稿</a></div><div class=\"workflow-list\">");
     for(Draft draft:drafts)b.append("<a class=\"workflow-list-row clearfix\" href=\"/workflow/edit?dataset=").append(u(draft.dataset())).append("&amp;draft=").append(u(draft.id())).append("\"><span class=\"workflow-list-main\"><strong>").append(e(DatasetSchema.get(draft.dataset()).label)).append("</strong><small>").append(draft.rows().size()).append(" 条差异 · 版本 ").append(draft.version()).append(" · ").append(e(dateTime(draft.updatedAt()))).append("</small></span><em>继续编辑</em></a>");
     if(drafts.isEmpty())b.append(empty("尚无私人草稿。"));return b.append("</div></section>").toString();
   }
@@ -163,9 +196,13 @@ final class WorkflowPages extends PageLayout {
   }
 
   private String diffTable(List<SnapshotRow> rows) {
-    StringBuilder b=new StringBuilder("<div class=\"workflow-table-scroll\"><table class=\"workflow-table workflow-diff-table\"><thead><tr><th>企业／客户</th><th>期次</th><th>字段</th><th>正式原值</th><th>拟修改值</th></tr></thead><tbody>");
-    for(SnapshotRow row:rows){DatasetSchema schema=DatasetSchema.get(row.before().dataset());for(FieldDiff field:row.fields())b.append("<tr><td class=\"workflow-company\">").append(e(schema.value(row.before().values(),schema.customerColumn))).append("</td><td>").append(e(row.before().period().key())).append("</td><td>").append(e(field.title())).append("</td><td class=\"workflow-before\">").append(e(blankLabel(field.before()))).append("</td><td class=\"workflow-after\">").append(e(blankLabel(field.after()))).append("</td></tr>");}
-    return b.append("</tbody></table></div>").toString();
+    StringBuilder b=new StringBuilder();
+    for(BranchSnapshot branch:WorkflowContracts.branchSnapshots(rows)){
+      b.append("<section class=\"workflow-branch-snapshot\"><h2>").append(e(Organizations.label(branch.organizationId()))).append(" · 修改明细</h2><div class=\"workflow-table-scroll\"><table class=\"workflow-table workflow-diff-table\"><thead><tr><th>企业／客户</th><th>来源时间</th><th>字段</th><th>正式原值</th><th>拟修改值</th></tr></thead><tbody>");
+      for(SnapshotRow row:branch.rows()){DatasetSchema schema=DatasetSchema.get(row.before().dataset());for(FieldDiff field:row.fields())b.append("<tr><td class=\"workflow-company\">").append(e(schema.value(row.before().values(),schema.customerColumn))).append("</td><td>").append(e(row.before().period().key())).append("</td><td>").append(e(field.title())).append("</td><td class=\"workflow-before\">").append(e(blankLabel(field.before()))).append("</td><td class=\"workflow-after\">").append(e(blankLabel(field.after()))).append("</td></tr>");}
+      b.append("</tbody></table></div></section>");
+    }
+    return b.toString();
   }
 
   private String actionBar(boolean draftMode) {

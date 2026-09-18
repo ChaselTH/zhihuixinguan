@@ -45,7 +45,7 @@ final class WorkflowIntegrationHttpTest {
     rejection.put("reason","补充 <核验> 内容");check(post("/workflow/review/reject",rejection).statusCode()==200,"reviewer returns through Main");
     check(!exportText("negative").contains("INTEGRATION_DRAFT_ONLY"),"returned snapshot excluded from export");
     use(operator);String returned=get("/workflow/submission?id="+first).body();String resume=unescape(match(returned,"href=\"([^\"]+)\">恢复草稿并修订"));
-    String resumed=get(resume).body();check(resumed.contains("name=\"prior\" value=\""+first+"\""),"filter retains returned submission lineage");
+    String resumed=get(resume).body();check(resumed.contains("name=\"priorSubmissionId\" value=\""+first+"\""),"difference editor retains returned submission lineage");
     fields=form(resumed,"/workflow/draft/save");fields.put("value_0_feedback","INTEGRATION_APPROVED <核验完成>");fields.put("intent","preview");
     String preview2=post("/workflow/draft/save",fields).body();String second=id(post("/workflow/confirm",form(preview2,"/workflow/confirm")).body());
     check(!second.equals(first)&&get("/workflow/submission?id="+second).body().contains(first),"resubmission creates new linked immutable record");

@@ -77,7 +77,7 @@ public final class WorkflowRoutesTest {
     check(submittedPage.status==200&&submittedPage.body().contains("待复核"),"operator confirmation creates pending immutable submission");
     Submission submission=store.workflow().submissions(operator.actor(),new Query(null,null,null,null,null,true,0,20)).get(0);
     check(store.find(operator.actor(),first.id()).values().get(DatasetSchema.get("multi").index("feedback")).isBlank(),"draft and pending submission do not change official value");
-    Draft latest=store.workflow().draft(operator.actor(),draft.id());Map<String,String> later=draftForm(operatorSession,first,"提交后的后续草稿",latest.id(),Long.toString(latest.version()),"","save",id());check(post(operatorSession,"/workflow/draft/save",later).status==409&&get(operatorSession,"/workflow/edit?dataset=multi&draft="+draft.id()).status==400,"submitted draft version is frozen and old editor link is safe");
+    Draft latest=store.workflow().draft(operator.actor(),draft.id());Map<String,String> later=draftForm(operatorSession,first,"提交后的后续草稿",latest.id(),Long.toString(latest.version()),"","save",id());check(post(operatorSession,"/workflow/draft/save",later).status==409&&get(operatorSession,"/workflow/edit?dataset=multi&draft="+draft.id()).status==409,"submitted draft version is frozen and old editor link is safe");
     check(after(store.workflow().submission(operator.actor(),submission.id()),first.id()).contains("<img"),"later draft edit cannot mutate submitted snapshot");
 
     Exchange pending=get(reviewerSession,"/workflow/reviews");check(pending.status==200&&pending.body().contains(shortIdText(submission.id()))&&pending.body().contains("复核待办"),"reviewer sees own-branch pending queue");
@@ -123,7 +123,9 @@ public final class WorkflowRoutesTest {
   }
 
   static void integrationRegressions()throws Exception {
-    for(int i=0;i<35;i++)store.workflow().saveDraft(operator.actor(),"",0,"cross",List.of(),"",id());
+    store.importRows(division.actor(),"cross",List.of(FoundationTest.candidate("cross","WUJIN","ROUTE-DRAFT-PAGES")),false,id());
+    var cross=store.list(operator.actor(),"cross",null,null).get(0);
+    for(int i=0;i<35;i++)store.workflow().saveDraft(operator.actor(),"",0,"cross",List.of(new RecordChange(cross.id(),cross.version(),Map.of("cross_feedback","PAGE-"+i))),"",id());
     var all=store.workflow().drafts(operator.actor(),"cross",0,100);
     String page1=get(operatorSession,"/workflow/drafts?dataset=cross").body(),page2=get(operatorSession,"/workflow/drafts?dataset=cross&page=2").body();
     check(page1.contains(all.get(0).id())&&page1.contains("下一页")&&page2.contains(all.get(34).id()),"all drafts reachable beyond first ten and first page");

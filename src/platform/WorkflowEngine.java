@@ -54,6 +54,12 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
     });
   }
   @Override public Draft draft(ActorContext a,String id) { return call(a,()->{operator(a);return loadDraft(a,id);}); }
+  @Override public Draft editableDraft(ActorContext a,String id) {
+    return call(a,()->{operator(a);Draft draft=loadDraft(a,id);
+      if(isConsumed(a,draft))throw error(Code.ALREADY_DECIDED,"该草稿版本已提交并冻结，请从提交记录查看；退回后可恢复草稿");
+      return draft;
+    });
+  }
   @Override public List<Draft> drafts(ActorContext a,String dataset,int offset,int limit) {
     return call(a,()->{
       operator(a);page(offset,limit);if(!blank(dataset).isEmpty())DatasetSchema.get(dataset);
@@ -62,6 +68,8 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
       if(!blank(dataset).isEmpty()){sql+=" AND d.dataset=?";args.add(dataset);}
       // Filter consumed versions before paging so a submitted version cannot hide a later draft.
       sql+=" AND NOT EXISTS (SELECT 1 FROM submissions s WHERE s.owner_id=d.owner_id AND s.draft_id=d.id AND s.draft_revision=d.revision AND s.state IN ('SUBMITTED','APPROVED'))";
+      // Canonical empty snapshots are inactive; exclude before LIMIT/OFFSET.
+      sql+=" AND d.payload<>?";args.add(encode(List.of()));
       sql+=" ORDER BY d.updated_at DESC,d.id LIMIT ? OFFSET ?";args.add(limit);args.add(offset);
       List<Draft> result=new ArrayList<>();
       try(PreparedStatement st=statement(sql,args.toArray());ResultSet rs=st.executeQuery()){while(rs.next())result.add(readDraft(rs));}
@@ -80,7 +88,8 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
   @Override public Preview previewDirect(ActorContext a,String dataset,List<RecordChange> changes) {
     return call(a,()->{
       direct(a);List<SnapshotRow> rows=snapshot(a,dataset,changes,AccessPolicy.Action.DIRECT_EDIT,false);
-      return createPreview(a,Mode.DIRECT,batchOrganization(a,rows),dataset,"",0,"",rows);
+      String org=batchOrganization(a,rows);Mode mode=Organizations.DIVISION.equals(org)?Mode.BATCH_DIRECT:Mode.DIRECT;
+      return createPreview(a,mode,org,dataset,"",0,"",rows);
     });
   }
   @Override public Preview preview(ActorContext a,String previewId) {
@@ -112,7 +121,7 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
         reviewers=reviewers(preview.organizationId());
         if(reviewers.isEmpty())throw error(Code.NO_REVIEWER,"本支行尚无有效复核员，请管理员配置后重试；草稿仍保留");
       }
-      String submissionId=id(),now=now();boolean isDirect=preview.mode()==Mode.DIRECT;
+      String submissionId=id(),now=now();boolean isDirect=preview.mode()!=Mode.REVIEW;
       exec("INSERT INTO submissions(id,owner_id,organization_id,dataset,state,payload,created_at,reviewer_id,decided_at,decision_reason,mode,owner_name,reviewer_name,draft_id,draft_revision,prior_submission_id,preview_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         submissionId,a.userId(),preview.organizationId(),preview.dataset(),isDirect?"APPROVED":"SUBMITTED",encode(preview.rows()),now,
         isDirect?a.userId():null,isDirect?now:null,"",preview.mode().name(),a.name(),isDirect?a.name():"",preview.draftId(),preview.draftVersion(),preview.priorSubmissionId(),preview.id());
@@ -289,7 +298,8 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
     return consumed!=null&&Integer.parseInt(consumed)>0;
   }
   private Draft readDraft(ResultSet rs)throws SQLException {
-    return new Draft(rs.getString("id"),rs.getString("owner_id"),rs.getString("organization_id"),rs.getString("dataset"),rs.getLong("revision"),Instant.parse(rs.getString("updated_at")),rs.getString("prior_submission_id"),WorkflowCodec.rows(rs.getString("payload")));
+    String returned=scalar("SELECT id FROM submissions WHERE owner_id=? AND draft_id=? AND draft_revision=? AND state='RETURNED' ORDER BY decided_at DESC,id LIMIT 1",rs.getString("owner_id"),rs.getString("id"),rs.getLong("revision"));
+    return new Draft(rs.getString("id"),rs.getString("owner_id"),rs.getString("organization_id"),rs.getString("dataset"),rs.getLong("revision"),Instant.parse(rs.getString("updated_at")),returned==null?rs.getString("prior_submission_id"):returned,WorkflowCodec.rows(rs.getString("payload")));
   }
   private Submission loadSubmission(ActorContext a,String id)throws SQLException {
     try(PreparedStatement st=statement("SELECT * FROM submissions WHERE id=?",id);ResultSet rs=st.executeQuery()) {
@@ -330,7 +340,7 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
     if(AccessPolicy.can(a,AccessPolicy.Action.VIEW,submission.organizationId()))return submission;
     List<SnapshotRow> rows=submission.rows().stream().filter(row->AccessPolicy.can(a,AccessPolicy.Action.VIEW,row.before().organizationId())).toList();
     if(rows.isEmpty())throw new SecurityException("提交单不存在或无权访问");
-    return new Submission(submission.id(),submission.mode(),submission.state(),submission.ownerId(),submission.ownerName(),submission.organizationId(),submission.dataset(),submission.draftId(),submission.draftVersion(),submission.priorSubmissionId(),submission.createdAt(),submission.reviewerId(),submission.reviewerName(),submission.decidedAt(),submission.reason(),rows);
+    return new Submission(submission.id(),submission.mode(),submission.state(),submission.ownerId(),submission.ownerName(),a.organizationId(),submission.dataset(),submission.draftId(),submission.draftVersion(),submission.priorSubmissionId(),submission.createdAt(),submission.reviewerId(),submission.reviewerName(),submission.decidedAt(),submission.reason(),rows);
   }
   private void checkPrior(ActorContext a,String prior,String dataset,String org)throws SQLException {
     if(prior.isEmpty())return;Submission old=loadSubmission(a,prior);
@@ -384,7 +394,7 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
   private static void page(int offset,int limit){if(offset<0||offset>1_000_000||limit<1||limit>100)throw error(Code.INVALID_INPUT,"分页参数无效，每页最多 100 条");}
   private static void operator(ActorContext a){AccessPolicy.require(a,AccessPolicy.Action.SAVE_DRAFT,a.organizationId());}
   private static void direct(ActorContext a){AccessPolicy.require(a,AccessPolicy.Action.DIRECT_EDIT,a.organizationId());}
-  private static void checkMode(ActorContext a,Mode mode,String org){AccessPolicy.require(a,mode==Mode.REVIEW?AccessPolicy.Action.SUBMIT:AccessPolicy.Action.DIRECT_EDIT,org);}
+  private static void checkMode(ActorContext a,Mode mode,String org){if(mode==Mode.BATCH_DIRECT&&a.role()!=Role.DIVISION_ADMIN)throw new SecurityException("批量跨支行修改仅限分行管理员");AccessPolicy.require(a,mode==Mode.REVIEW?AccessPolicy.Action.SUBMIT:AccessPolicy.Action.DIRECT_EDIT,org);}
   private static void requireRows(List<SnapshotRow> rows){if(rows.isEmpty())throw error(Code.INVALID_INPUT,"没有实际变化的字段，无需提交");}
   private static List<RecordChange> changes(List<SnapshotRow> rows){return rows.stream().map(SnapshotRow::change).toList();}
   private static String summary(ActorContext a,String dataset,int count){return a.name()+" · "+DatasetSchema.get(dataset).label+" · "+count+" 条；详情需登录核验权限";}
