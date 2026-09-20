@@ -1,7 +1,7 @@
 package xinguan.platform;
 
 public final class AccessPolicy {
-  public enum Action { VIEW, DIRECT_EDIT, SAVE_DRAFT, SUBMIT, REVIEW, UPLOAD }
+  public enum Action { VIEW, DIRECT_EDIT, SAVE_DRAFT, SUBMIT, REVIEW, DIVISION_REVIEW, UPLOAD }
   private AccessPolicy() {}
   public static boolean all(ActorContext a) { return a!=null&&(a.role()==Role.SUPER_ADMIN||a.role()==Role.DIVISION_ADMIN); }
   public static boolean can(ActorContext a, Action action, String org) {
@@ -12,6 +12,7 @@ public final class AccessPolicy {
       case DIRECT_EDIT -> a.role()==Role.DIVISION_ADMIN||a.role()==Role.BRANCH_ADMIN||a.role()==Role.REVIEWER;
       case SAVE_DRAFT,SUBMIT -> a.role()==Role.OPERATOR;
       case REVIEW -> a.role()==Role.REVIEWER;
+      case DIVISION_REVIEW -> a.role()==Role.DIVISION_ADMIN;
     };
   }
   public static void require(ActorContext a, Action action, String org) {

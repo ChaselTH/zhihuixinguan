@@ -70,7 +70,7 @@ public final class Main extends HttpSupport {
         }
         if(path.equals("/foundation")){if(!AccessPolicy.all(session.actor))throw new SecurityException("没有全行基础状态查看权限");sendHtml(x,200,imports.diagnostics(store.platform.schemaVersion(),store.platform.diagnostics(),store.platform.auditEvents(session.actor,100)));return;}
       }
-      if(method.equals("POST")&&(path.equals("/imports/upload")||path.startsWith("/imports/upload/"))){importing.upload(x,session,path.equals("/imports/upload")?"bundle":path.substring("/imports/upload/".length()));return;}
+      if(method.equals("POST")&&path.equals("/imports")){importing.upload(x,session);return;}
       if(method.equals("POST")){
         requireForm(x);Map<String,String> f=decodeForm(readLimited(x.getRequestBody(),2*1024*1024));if(!auth.csrf(session,f.get("csrf")))throw new SecurityException("页面校验已失效，请刷新后重试");
         if(new MaintenanceRoutes(store.platform,version).post(x,session,f))return;

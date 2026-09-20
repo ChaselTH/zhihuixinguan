@@ -9,8 +9,8 @@ import java.util.function.Consumer;
 
 /** H2 DDL can commit implicitly. Interrupted migrations fail closed and require a verified backup. */
 final class SchemaMigrations {
-  static final int CURRENT_VERSION=8;
-  private static final List<String> FILES=List.of("V001__foundation.sql","V002__workflow_platform.sql","V003__access_platform.sql","V004__import_jobs.sql","V005__feedback_roles_credentials.sql","V006__feedback_deadlines.sql","V007__record_deletions.sql","V008__completion_rules.sql");
+  static final int CURRENT_VERSION=10;
+  private static final List<String> FILES=List.of("V001__foundation.sql","V002__workflow_platform.sql","V003__access_platform.sql","V004__import_jobs.sql","V005__feedback_roles_credentials.sql","V006__feedback_deadlines.sql","V007__record_deletions.sql","V008__completion_rules.sql","V009__two_stage_workflow.sql","V010__selected_import_month.sql");
   static void apply(Connection db, Consumer<String> checkpoint) throws Exception {
     List<String> scripts=new ArrayList<>();
     for(String file:FILES) try(InputStream in=SchemaMigrations.class.getResourceAsStream("/db/"+file)) {

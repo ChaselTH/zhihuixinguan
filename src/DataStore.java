@@ -30,6 +30,7 @@ final class DataStore implements AutoCloseable {
     List<ImportRecord> result=new ArrayList<>();
     for(BusinessRecord row:rows){
       ImportRecord r=new ImportRecord();r.id=row.id();r.dataset=row.dataset();r.period=row.period().key();r.month=YearMonth.from(row.period().start()).toString();r.filename=row.filename();r.importedAt=row.importedAt();r.updatedAt=row.updatedAt();
+      r.workflowStage=row.workflowStage();r.workflowReason=row.workflowReason();
       r.requiredFields=rules.get(row.dataset()).requiredFields();
       var deadline=deadlines.get(new FeedbackDeadlines.Key(row.dataset(),row.period().key()));r.feedbackAsOf=asOf;if(deadline!=null){r.feedbackDeadline=deadline.dueDate();r.deadlineRevision=deadline.revision();}
       r.columns=DatasetSchema.get(row.dataset()).fields.stream().map(DatasetSchema.Field::title).toList();r.rows.add(row.values());r.versions.add(row.version());r.organizationId=row.organizationId();r.legacyExtras=row.legacyExtras();result.add(r);
@@ -37,7 +38,13 @@ final class DataStore implements AutoCloseable {
     return result;
   }
   DashboardData dashboard(RangeSelection range,List<String> months,ActorContext actor){
-    synchronized(platform){return new DashboardData(range,months,List.of(),readRange(range,actor),platform.completionRules().visible(actor));}
+    synchronized(platform){return new DashboardData(range,months,List.of(),readRange(range,actor),platform.completionRules().visible(actor),actor);}
+  }
+  boolean businessVisible(ActorContext actor,BusinessRecord row){
+    if(AccessPolicy.all(actor))return true;
+    var rule=platform.completionRules().visible(actor).get(row.dataset());
+    return row.workflowStage()==xinguan.platform.WorkflowContracts.RowStage.READY||row.workflowStage()==xinguan.platform.WorkflowContracts.RowStage.RETURNED||row.workflowStage()==xinguan.platform.WorkflowContracts.RowStage.BRANCH_REVIEW||
+      (row.workflowStage()==xinguan.platform.WorkflowContracts.RowStage.PUBLISHED||row.workflowStage()==xinguan.platform.WorkflowContracts.RowStage.LEGACY_PUBLISHED)&&!rule.complete(row.values());
   }
   private void migrate()throws Exception {
     if(!Files.isDirectory(root.resolve("months")))return;

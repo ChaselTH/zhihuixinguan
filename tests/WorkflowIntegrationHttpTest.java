@@ -33,7 +33,7 @@ final class WorkflowIntegrationHttpTest {
     var preview=post("/workflow/draft/save",fields);check(preview.statusCode()==200&&preview.body().contains("确认本次修改"),"server diff preview routed");
     var confirm=form(preview.body(),"/workflow/confirm");confirm.put("value_0_feedback","FORGED_CONFIRM_VALUE");
     var submitted=post("/workflow/confirm",confirm);String first=id(submitted.body());
-    check(submitted.statusCode()==200&&submitted.body().contains("待复核")&&!submitted.body().contains("FORGED_CONFIRM_VALUE"),"confirm freezes server snapshot, ignores replacement fields");
+    check(submitted.statusCode()==200&&submitted.body().contains("待支行复核")&&!submitted.body().contains("FORGED_CONFIRM_VALUE"),"confirm freezes server snapshot, ignores replacement fields");
     check(post("/workflow/confirm",confirm).statusCode()==200,"same confirmation idempotent through Main");
     check(!exportText("negative").contains("INTEGRATION_DRAFT_ONLY"),"pending snapshot excluded from export");
     use(otherClient);check(get("/workflow/submission?id="+first).statusCode()==403&&get("/audit?submissionId="+first).statusCode()==403,"cross branch snapshot and audit target blocked");
@@ -50,7 +50,8 @@ final class WorkflowIntegrationHttpTest {
     String preview2=post("/workflow/draft/save",fields).body();String second=id(post("/workflow/confirm",form(preview2,"/workflow/confirm")).body());
     check(!second.equals(first)&&get("/workflow/submission?id="+second).body().contains(first),"resubmission creates new linked immutable record");
     use(reviewer);var approval=form(get("/workflow/submission?id="+second).body(),"/workflow/review/approve");
-    check(post("/workflow/review/approve",approval).statusCode()==200&&post("/workflow/review/approve",approval).statusCode()==200,"approval succeeds with safe retry");
+    check(post("/workflow/review/approve",approval).statusCode()==200&&post("/workflow/review/approve",approval).statusCode()==200&&!exportText("negative").contains("INTEGRATION_APPROVED"),"branch approval succeeds with safe retry but does not publish");
+    use(division);check(post("/workflow/review/approve",form(get("/workflow/submission?id="+second).body(),"/workflow/review/approve")).statusCode()==200,"division final approval publishes operator snapshot");
     check(exportText("negative").contains("INTEGRATION_APPROVED")&&get("/details?dataset=negative&month=2026-09").body().contains("row-complete"),"approved snapshot reaches formal completion and real Excel export");
     check(!get("/?month=2026-09").body().contains("INTEGRATION_APPROVED"),"completed row leaves homepage incomplete preview");
     String audit=get("/audit?submissionId="+second).body();check(audit.contains("INTEGRATION_APPROVED &lt;核验完成&gt;")&&!audit.contains("INTEGRATION_DRAFT_ONLY")&&audit.contains("name=\"submissionId\""),"public audit link is exact and preserves scope on filtering");
@@ -58,12 +59,21 @@ final class WorkflowIntegrationHttpTest {
     use(root);check(get("/workflow/submission?id="+second).statusCode()==200&&get("/audit?submissionId="+second).statusCode()==200,"super authorized read-only cross-module trace");
     check(post("/workflow/review/approve",Map.of("csrf",csrf(),"submissionId",second,"requestId",UUID.randomUUID().toString())).statusCode()==403,"super cannot approve workflow");
     int n=0;for(HttpClient direct:List.of(division,branch,reviewer)) {
+      if(direct!=division){use(division);String baseKey="INTEGRATION_DIRECT_BASE_"+(n+1);var baseUpload=HttpSmokeTest.upload("multi",HttpSmokeTest.workbook("multi","WUJIN",baseKey),csrf());check(baseUpload.statusCode()==200&&post("/imports/confirm",Map.of("csrf",csrf(),"token",HttpSmokeTest.hidden(baseUpload.body()).get("token"),"mode","preserve")).statusCode()==303,"seed independent unfinished row for direct role");}
       use(direct);fields=edit("multi");String marker="INTEGRATION_DIRECT_"+(++n);fields.put("value_0_feedback",marker);
       var directPreview=post("/workflow/direct/preview",fields);check(directPreview.statusCode()==200&&!exportText("multi").contains(marker),"direct role preview does not publish");
-      check(post("/workflow/confirm",form(directPreview.body(),"/workflow/confirm")).statusCode()==200&&exportText("multi").contains(marker),"direct role confirms before publication");
+      var confirmation=post("/workflow/confirm",form(directPreview.body(),"/workflow/confirm"));
+      check(confirmation.statusCode()==200,"direct role confirms server snapshot");
+      if(direct==division)check(exportText("multi").contains(marker),"division admin confirmation publishes directly");
+      else {
+        check(!exportText("multi").contains(marker),"branch edits wait for division approval");
+        use(division);String directSubmission=id(confirmation.body());var finalApproval=form(get("/workflow/submission?id="+directSubmission).body(),"/workflow/review/approve");
+        check(post("/workflow/review/approve",finalApproval).statusCode()==200&&exportText("multi").contains(marker),"division final approval publishes branch edits");
+      }
     }
     use(operator);fields=edit("cross");fields.put("value_0_cross_feedback","INTEGRATION_INTERNAL_APPROVED");fields.put("intent","preview");var internal=post("/workflow/draft/save",fields);String internalId=id(post("/workflow/confirm",form(internal.body(),"/workflow/confirm")).body());
-    use(reviewer);check(post("/workflow/review/approve",form(get("/workflow/submission?id="+internalId).body(),"/workflow/review/approve")).statusCode()==200&&exportText("cross").contains("INTEGRATION_INTERNAL_APPROVED"),"internal data participates in same workflow and export");
+    use(reviewer);check(post("/workflow/review/approve",form(get("/workflow/submission?id="+internalId).body(),"/workflow/review/approve")).statusCode()==200&&!exportText("cross").contains("INTEGRATION_INTERNAL_APPROVED"),"branch approval stages internal data for division");
+    use(division);check(post("/workflow/review/approve",form(get("/workflow/submission?id="+internalId).body(),"/workflow/review/approve")).statusCode()==200&&exportText("cross").contains("INTEGRATION_INTERNAL_APPROVED"),"division final approval publishes internal data");
     use(otherClient);check(!exportText("cross").contains("INTEGRATION_INTERNAL_APPROVED"),"internal export branch isolation");
     use(operator);check(get("/workflow/drafts").statusCode()==200&&get("/workflow").body().contains("/workflow/drafts"),"all private drafts accessible from workbench");
     use(root);check(get("/workflow/drafts").statusCode()==403,"all draft list remains private");
@@ -76,7 +86,16 @@ final class WorkflowIntegrationHttpTest {
   static Map<String,String> form(String html,String action) {
     Matcher forms=Pattern.compile("<form\\b[^>]*action=\""+Pattern.quote(action)+"\"[^>]*>(.*?)</form>",Pattern.DOTALL).matcher(html);
     if(!forms.find())throw new AssertionError("missing form "+action+"; page starts "+html.substring(0,Math.min(100,html.length())));
-    String content=forms.group(1);Map<String,String> values=HttpSmokeTest.hidden(content);
+    return parseForm(forms.group(1));
+  }
+  static Map<String,String> formLast(String html,String action) {
+    Matcher forms=Pattern.compile("<form\\b[^>]*action=\""+Pattern.quote(action)+"\"[^>]*>(.*?)</form>",Pattern.DOTALL).matcher(html);String content=null;
+    while(forms.find())content=forms.group(1);
+    if(content==null)throw new AssertionError("missing form "+action+"; page starts "+html.substring(0,Math.min(100,html.length())));
+    return parseForm(content);
+  }
+  private static Map<String,String> parseForm(String content) {
+    Map<String,String> values=HttpSmokeTest.hidden(content);
     Matcher text=Pattern.compile("<textarea[^>]*name=\"([^\"]+)\"[^>]*>(.*?)</textarea>",Pattern.DOTALL).matcher(content);while(text.find())values.put(text.group(1),unescape(text.group(2)));
     Matcher selects=Pattern.compile("<select[^>]*name=\"([^\"]+)\"[^>]*>(.*?)</select>",Pattern.DOTALL).matcher(content);
     while(selects.find()){String value="";Matcher options=Pattern.compile("<option value=\"([^\"]*)\"([^>]*)>").matcher(selects.group(2));while(options.find())if(options.group(2).contains("selected"))value=unescape(options.group(1));values.put(selects.group(1),value);}

@@ -6,8 +6,9 @@ import java.util.*;
 /** Public A/B contract. All identity, scope and state checks are repeated in the store. */
 public final class WorkflowContracts {
   private WorkflowContracts() {}
-  public enum State { SUBMITTED, APPROVED, RETURNED }
-  public enum Mode { REVIEW, DIRECT, BATCH_DIRECT }
+  public enum State { SUBMITTED, PENDING_DIVISION, PARTIAL, APPROVED, RETURNED }
+  public enum RowStage { READY, BRANCH_REVIEW, DIVISION_REVIEW, RETURNED, PUBLISHED, LEGACY_PUBLISHED }
+  public enum Mode { REVIEW, DIRECT, BATCH_DIRECT, IMPORT }
   public enum Code {
     INVALID_INPUT, NOT_FOUND, VERSION_CONFLICT, CONFIRMATION_EXPIRED,
     ALREADY_SUBMITTED, ALREADY_DECIDED, NO_REVIEWER, OWNER_CHANGED,
@@ -56,8 +57,14 @@ public final class WorkflowContracts {
   public record Submission(String id, Mode mode, State state, String ownerId, String ownerName,
                            String organizationId, String dataset, String draftId, long draftVersion,
                            String priorSubmissionId, Instant createdAt, String reviewerId, String reviewerName,
-                           Instant decidedAt, String reason, List<SnapshotRow> rows) {
-    public Submission { rows=List.copyOf(rows); }
+                           Instant decidedAt, String reason, List<SnapshotRow> rows, Map<String,RowStage> rowStages) {
+    public Submission { rows=List.copyOf(rows);rowStages=Map.copyOf(rowStages); }
+    public Submission(String id,Mode mode,State state,String ownerId,String ownerName,String organizationId,String dataset,
+                      String draftId,long draftVersion,String priorSubmissionId,Instant createdAt,String reviewerId,String reviewerName,
+                      Instant decidedAt,String reason,List<SnapshotRow> rows) {
+      this(id,mode,state,ownerId,ownerName,organizationId,dataset,draftId,draftVersion,priorSubmissionId,createdAt,
+        reviewerId,reviewerName,decidedAt,reason,rows,Map.of());
+    }
   }
   /** from/through filter source periods, not submission creation dates. Null means no constraint. */
   public record Query(String dataset, String organization, State state, LocalDate from, LocalDate through,
@@ -80,9 +87,14 @@ public final class WorkflowContracts {
     Submission submission(ActorContext actor, String id);
     List<Submission> submissions(ActorContext actor, Query query);
     List<Submission> pendingReviews(ActorContext actor, Query query);
+    List<Submission> pendingDivisionReviews(ActorContext actor, Query query);
     List<Submission> recordHistory(ActorContext actor, String recordId, int offset, int limit);
     List<AuditEntry> auditTrail(ActorContext actor, String submissionId);
     Submission approve(ActorContext actor, String submissionId, String requestId);
     Submission reject(ActorContext actor, String submissionId, String reason, String requestId);
+    Submission approveRows(ActorContext actor, String submissionId, List<String> recordIds, String requestId);
+    Submission rejectRows(ActorContext actor, String submissionId, List<String> recordIds, String reason, String requestId);
+    /** Reopens one completed official row without changing its published values/version. */
+    String reopenCompleted(ActorContext actor, String recordId, long expectedVersion, String reason, String requestId);
   }
 }

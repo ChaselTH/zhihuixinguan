@@ -1,5 +1,7 @@
 package xinguan.platform;
 
+import xinguan.platform.WorkflowContracts.RowStage;
+
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -167,7 +169,7 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
   @Override public synchronized List<BusinessRecord> list(ActorContext actor,String dataset,LocalDate from,LocalDate through) {
     currentIdentity(actor);
     if(actor==null)throw new SecurityException("请先登录");
-    String sql="SELECT * FROM official_records WHERE "+ACTIVE_RECORD;List<Object> args=new ArrayList<>();
+    String sql="SELECT official_records.*,COALESCE(workflow_record_state.stage,'LEGACY_PUBLISHED') AS workflow_state,COALESCE(workflow_record_state.reason,'') AS workflow_reason FROM official_records LEFT JOIN workflow_record_state ON workflow_record_state.record_id=official_records.id WHERE "+ACTIVE_RECORD;List<Object> args=new ArrayList<>();
     if(!AccessPolicy.all(actor)){sql+=" AND organization_id=?";args.add(actor.organizationId());}
     if(dataset!=null&&!dataset.isBlank()){DatasetSchema.get(dataset);sql+=" AND dataset=?";args.add(dataset);}
     if(from!=null){sql+=" AND period_end>=?";args.add(java.sql.Date.valueOf(from));}
@@ -183,18 +185,7 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
     try {BusinessRecord r=load(id,false);if(r==null)throw new IllegalArgumentException("记录不存在或无权访问");AccessPolicy.require(actor,AccessPolicy.Action.VIEW,r.organizationId());return r;}catch(SQLException e){throw failure(e);}
   }
   @Override public synchronized String publishDirect(ActorContext actor,List<RecordChange> changes,String requestId) {
-    if(actor==null)throw new SecurityException("请先登录");
-    if(changes.isEmpty()||changes.size()>200)throw new IllegalArgumentException("每次保存 1～200 条记录");
-    List<String> canonical=new ArrayList<>();
-    for(RecordChange c:changes){canonical.add(c.recordId());canonical.add(Long.toString(c.expectedVersion()));canonical.add(Integer.toString(c.values().size()));for(var e:new TreeMap<>(c.values()).entrySet()){canonical.add(e.getKey());canonical.add(e.getValue());}}
-    String payload=Codec.hash(Codec.encode(canonical));
-    return transaction(()->{
-      currentIdentity(actor);
-      String result=repeat(actor,requestId,payload);if(result!=null)return result;
-      String eventId=UUID.randomUUID().toString();
-      applyOfficialChanges(actor,changes,AccessPolicy.Action.DIRECT_EDIT,"DIRECT_EDIT",requestId,"");
-      remember(actor,requestId,payload,eventId);return eventId;
-    });
+    throw new SecurityException("旧的直接写入接口已关闭；请使用服务端预览和对应审核流程");
   }
   /** Same connection and transaction as the caller; not a public workflow bypass. */
   List<String> applyOfficialChanges(ActorContext actor,List<RecordChange> changes,AccessPolicy.Action capability,String action,String requestId,String details)throws SQLException {
@@ -235,18 +226,20 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
   /** Caller owns the transaction and has checked identity, preview and decisions. */
   ImportOutcome applyImport(ActorContext actor,String dataset,List<BusinessRecord> incoming,Set<String> replace,String requestId)throws SQLException {
       AccessPolicy.require(actor,AccessPolicy.Action.UPLOAD,Organizations.DIVISION);
-      int added=0,duplicates=0,preserved=0;
+      int added=0,duplicates=0,preserved=0;List<WorkflowContracts.SnapshotRow> proposals=new ArrayList<>();
       for(BusinessRecord candidate:incoming) {
         DatasetSchema schema=DatasetSchema.get(candidate.dataset());
         if(!"bundle".equals(dataset)&&!dataset.equals(candidate.dataset())||candidate.values().size()!=schema.width()||!Organizations.BRANCHES.containsKey(candidate.organizationId()))throw new IllegalArgumentException("导入数据类型、机构或列数不正确");
         for(int i=0;i<schema.width();i++)if(schema.editable(i))schema.validateEdit(i,candidate.values().get(i));
         String fingerprint=fingerprint(candidate);boolean overwrite=replace.contains(fingerprint);BusinessRecord old=null;
-        try(PreparedStatement st=statement("SELECT * FROM official_records WHERE source_fingerprint=? AND "+ACTIVE_RECORD+" FOR UPDATE",fingerprint);ResultSet rs=st.executeQuery()){
+        try(PreparedStatement st=statement("SELECT official_records.*,COALESCE(workflow_record_state.stage,'LEGACY_PUBLISHED') AS workflow_state,COALESCE(workflow_record_state.reason,'') AS workflow_reason FROM official_records LEFT JOIN workflow_record_state ON workflow_record_state.record_id=official_records.id WHERE source_fingerprint=? AND "+ACTIVE_RECORD+" FOR UPDATE",fingerprint);ResultSet rs=st.executeQuery()){
           if(rs.next())old=read(rs);if(rs.next())throw new IllegalArgumentException("存在多条相同历史来源记录，请先核对，未自动覆盖");
         }
         if(old==null) {
-          String id=UUID.randomUUID().toString();insert(candidate,id);added++;
-          audit(actor,candidate.organizationId(),id,"IMPORT_ADD",requestId,"",Codec.encode(candidate.values()),candidate.filename());
+          String id=UUID.randomUUID().toString();BusinessRecord base=withoutImportedFills(candidate);insert(base,id);setImportedWorkflowState(id,RowStage.READY,actor,requestId);added++;
+          audit(actor,candidate.organizationId(),id,"IMPORT_ADD",requestId,"",Codec.encode(base.values()),candidate.filename());
+          BusinessRecord persisted=load(id,false);Map<String,String> proposal=filledImportValues(schema,candidate,persisted);
+          if(!proposal.isEmpty())proposals.add(new WorkflowContracts.SnapshotRow(persisted,new RecordChange(id,persisted.version(),proposal)));
         } else {
           duplicates++;List<String> values=new ArrayList<>(candidate.values());boolean kept=false;
           for(int i=0;i<schema.width();i++)if(schema.editable(i)&&!overwrite&&!old.values().get(i).isBlank()) {
@@ -254,12 +247,13 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
           }
           if(kept)preserved++;
           if(!values.equals(old.values())) {
-            exec("UPDATE official_records SET revision=revision+1,cell_data=?,updated_at=?,filename=? WHERE id=?",Codec.encode(values),Instant.now().toString(),candidate.filename(),old.id());
-            audit(actor,old.organizationId(),old.id(),"IMPORT_UPDATE",requestId,Codec.encode(old.values()),Codec.encode(values),overwrite?"已确认覆盖填报内容（包括空白）":"保留已有填报内容");
+            Map<String,String> proposal=new TreeMap<>();for(int i=0;i<schema.width();i++)if(schema.editable(i)&&!old.values().get(i).equals(values.get(i)))proposal.put(schema.fields.get(i).key(),values.get(i));
+            if(!proposal.isEmpty()){proposals.add(new WorkflowContracts.SnapshotRow(old,new RecordChange(old.id(),old.version(),proposal)));audit(actor,old.organizationId(),old.id(),"IMPORT_PROPOSE",requestId,Codec.encode(old.values()),Codec.encode(values),overwrite?"覆盖值待两级审核；正式值尚未改变":"补空值待两级审核；正式值尚未改变");}
           }
         }
         checkpoint.accept("import-row-written");
       }
+      if(!proposals.isEmpty())workflow.submitImported(actor,proposals,requestId);
       String batch=UUID.randomUUID().toString();
       exec("INSERT INTO import_batches VALUES(?,?,?,?,?,?,?)",batch,actor.userId(),dataset,Instant.now().toString(),added,duplicates,preserved);
       checkpoint.accept("import-batch-written");return new ImportOutcome(batch,added,duplicates,preserved);
@@ -271,7 +265,7 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
         try(PreparedStatement st=statement("SELECT source_hash FROM migration_items WHERE legacy_key=?",item.key());ResultSet rs=st.executeQuery()) {
           if(rs.next()){if(!rs.getString(1).equals(item.sourceHash()))throw new IllegalStateException("旧数据在迁移后发生变化，请先核对备份："+item.key());continue;}
         }
-        String id="legacy-"+Codec.hash(item.key()).substring(0,40);insert(item.record(),id);
+        String id="legacy-"+Codec.hash(item.key()).substring(0,40);insert(item.record(),id);setImportedWorkflowState(id,RowStage.LEGACY_PUBLISHED,new ActorContext("legacy-migration","历史迁入",Role.DIVISION_ADMIN,Organizations.DIVISION),"migration-v1");
         exec("INSERT INTO migration_items VALUES(?,?,?)",item.key(),id,item.sourceHash());
         exec("INSERT INTO audit_events VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",UUID.randomUUID().toString(),Instant.now().toString(),"legacy-migration","历史迁入（原操作人未知）","MIGRATION",item.record().organizationId(),id,"LEGACY_MIGRATION","migration-v1","",Codec.encode(item.record().values()),Codec.encode(new ArrayList<>(item.record().legacyExtras().values())));
         imported++;
@@ -305,12 +299,18 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
     List<String> extras=new ArrayList<>();for(var e:new TreeMap<>(r.legacyExtras()).entrySet()){extras.add(e.getKey());extras.add(e.getValue());}
     exec("INSERT INTO official_records VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",id,1L,r.dataset(),r.period().key(),java.sql.Date.valueOf(r.period().start()),java.sql.Date.valueOf(r.period().end()),r.organizationId(),fingerprint(r),Codec.encode(r.values()),r.filename(),r.importedAt(),r.updatedAt(),Codec.encode(extras));
   }
+  private static BusinessRecord withoutImportedFills(BusinessRecord source){DatasetSchema schema=DatasetSchema.get(source.dataset());List<String> values=new ArrayList<>(source.values());for(int i=0;i<schema.width();i++)if(schema.editable(i))values.set(i,"");return new BusinessRecord(source.id(),source.version(),source.dataset(),source.period(),source.organizationId(),values,source.filename(),source.importedAt(),source.updatedAt(),source.legacyExtras(),RowStage.READY,"");}
+  private static Map<String,String> filledImportValues(DatasetSchema schema,BusinessRecord incoming,BusinessRecord base){Map<String,String> values=new TreeMap<>();for(int i=0;i<schema.width();i++)if(schema.editable(i)&&!incoming.values().get(i).isBlank())values.put(schema.fields.get(i).key(),incoming.values().get(i));return values;}
   private BusinessRecord load(String id,boolean lock)throws SQLException{
-    try(PreparedStatement st=statement("SELECT * FROM official_records WHERE id=? AND "+ACTIVE_RECORD+(lock?" FOR UPDATE":""),id);ResultSet rs=st.executeQuery()){return rs.next()?read(rs):null;}
+    try(PreparedStatement st=statement("SELECT official_records.*,COALESCE(workflow_record_state.stage,'LEGACY_PUBLISHED') AS workflow_state,COALESCE(workflow_record_state.reason,'') AS workflow_reason FROM official_records LEFT JOIN workflow_record_state ON workflow_record_state.record_id=official_records.id WHERE official_records.id=? AND "+ACTIVE_RECORD+(lock?" FOR UPDATE":""),id);ResultSet rs=st.executeQuery()){return rs.next()?read(rs):null;}
   }
   private BusinessRecord read(ResultSet rs)throws SQLException {
     Map<String,String> extras=new LinkedHashMap<>();String raw=rs.getString("legacy_extras");if(!raw.isEmpty()){List<String> a=Codec.decode(raw);for(int i=0;i+1<a.size();i+=2)extras.put(a.get(i),a.get(i+1));}
-    return new BusinessRecord(rs.getString("id"),rs.getLong("revision"),rs.getString("dataset"),new Period(rs.getString("period_key"),rs.getDate("period_start").toLocalDate(),rs.getDate("period_end").toLocalDate()),rs.getString("organization_id"),Codec.decode(rs.getString("cell_data")),rs.getString("filename"),rs.getString("imported_at"),rs.getString("updated_at"),extras);
+    return new BusinessRecord(rs.getString("id"),rs.getLong("revision"),rs.getString("dataset"),new Period(rs.getString("period_key"),rs.getDate("period_start").toLocalDate(),rs.getDate("period_end").toLocalDate()),rs.getString("organization_id"),Codec.decode(rs.getString("cell_data")),rs.getString("filename"),rs.getString("imported_at"),rs.getString("updated_at"),extras,RowStage.valueOf(rs.getString("workflow_state")),rs.getString("workflow_reason"));
+  }
+  private void setImportedWorkflowState(String recordId,RowStage stage,ActorContext actor,String requestId)throws SQLException {
+    exec("MERGE INTO workflow_record_state(record_id,submission_id,owner_id,stage,reason,updated_at) KEY(record_id) VALUES(?,NULL,?,?,?,?)",recordId,actor.userId(),stage.name(),"",Instant.now().toString());
+    exec("INSERT INTO workflow_item_events VALUES(?,?,?,?,?,?,?,?,?,?,?)",UUID.randomUUID().toString(),null,recordId,stage.name(),stage==RowStage.LEGACY_PUBLISHED?"LEGACY_MIGRATION":"IMPORT_READY",actor.userId(),actor.name(),actor.role().name(),requestId,"",Instant.now().toString());
   }
   private String audit(ActorContext a,String org,String record,String action,String request,String before,String after,String details)throws SQLException {
     String id=UUID.randomUUID().toString();

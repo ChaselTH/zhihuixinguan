@@ -54,7 +54,7 @@ public final class MaintenancePlatformTest {
     check(f.store.list(f.root,null,null,null).size()==4,"pending created after preview blocks entire deletion");
     f.w().reject(f.review,pending.id(),"synthetic test",id());
     f.store.deadlines().save(f.div,"cross",c.period().key(),"2026-09-20",0);
-    var staged=f.store.importing().stage(f.div,"multi",List.of(ImportPlatformTest.source(a)),0);
+    var staged=ImportPlatformTest.stage(f.store.importing(),f.div,"multi",List.of(ImportPlatformTest.source(a)),0);
     var direct=f.w().previewDirect(f.div,"multi",List.of(edit(a,"new edit")));
     f.w().confirm(f.div,direct.id(),id());expect(ConcurrentModificationException.class,()->m.confirm(f.div,p.token(),"month"));
     var fresh=m.previewMonth(f.div,"2026-09");
@@ -74,8 +74,8 @@ public final class MaintenancePlatformTest {
   }}
   static void migration()throws Exception{try(var f=new Fixture()){
     var r=f.record("WUJIN","multi");f.store.close();
-    try(var db=connect(f.dir);var st=db.createStatement()){st.execute("DROP TABLE completion_rules");st.execute("DROP TABLE record_deletions");st.execute("DELETE FROM schema_migrations WHERE version>=7");st.execute("DELETE FROM schema_migration_attempts WHERE version>=7");}
-    f.open();check(f.store.schemaVersion()==8&&f.store.find(f.div,r.id()).id().equals(r.id()),"V6 upgrades without losing existing records");
+    try(var db=connect(f.dir);var st=db.createStatement()){st.execute("DROP TABLE workflow_item_events");st.execute("DROP TABLE workflow_record_state");st.execute("ALTER TABLE submission_items DROP COLUMN workflow_state");st.execute("ALTER TABLE import_jobs DROP COLUMN selected_month");st.execute("DROP TABLE completion_rules");st.execute("DROP TABLE record_deletions");st.execute("DELETE FROM schema_migrations WHERE version>=7");st.execute("DELETE FROM schema_migration_attempts WHERE version>=7");}
+    f.open();check(f.store.schemaVersion()==10&&f.store.find(f.div,r.id()).id().equals(r.id()),"V6 upgrades without losing existing records");
   }
     try(var f=new Fixture()){
       var base=f.record("WUJIN","multi");var crossing=new BusinessRecord("",0,"multi",Period.parse("20261025-20261105",""),base.organizationId(),base.values(),base.filename(),base.importedAt(),"",Map.of());

@@ -78,14 +78,14 @@ public final class AccessPlatformTest {
   }
   static void auditTests(WorkflowPlatformTest.Fixture f) {
     var p=f.store.access();var own=f.record("WUJIN","multi");var other=f.record("JINTAN","multi");
-    f.store.publishDirect(f.div,List.of(WorkflowPlatformTest.edit(own,"已核验 <script>安全转义</script>")),id());
+    WorkflowPlatformTest.publish(f.store,f.div,WorkflowPlatformTest.edit(f.store.find(f.div,own.id()),"已核验 <script>安全转义</script>"));
     check(p.audit(f.op,filter("business"),0,100).stream().allMatch(e->e.organization().equals("WUJIN")),"business audit branch scope");
     expect(SecurityException.class,()->p.audit(f.op,filter("security"),0,25));
     expect(SecurityException.class,()->p.audit(f.op,new AccessPlatform.AuditFilter("business","JINTAN","","",null,null),0,25));
     check(p.audit(f.div,filter("business"),0,100).stream().anyMatch(e->e.recordId().equals(other.id())),"division audit all branches");
-    var row=p.audit(f.op,new AccessPlatform.AuditFilter("business","","multi",own.id(),null,null),0,25).get(0);
+    var row=p.audit(f.op,new AccessPlatform.AuditFilter("business","","multi",own.id(),null,null),0,25).stream().filter(e->e.after().contains("已核验 <script>安全转义</script>")).findFirst().orElseThrow();
     check(row.after().contains("已核验 <script>安全转义</script>")&&row.customer().contains("虚构企业"),"audit decoded before after and customer");
-    f.save(f.op,f.store.find(f.op,own.id()),"PRIVATE_UNSUBMITTED_A1");check(!p.audit(f.root,filter("business"),0,100).toString().contains("PRIVATE_UNSUBMITTED_A1"),"private drafts never enter shared audit");
+    var privateRecord=f.record("WUJIN","multi");f.save(f.op,privateRecord,"PRIVATE_UNSUBMITTED_A1");check(!p.audit(f.root,filter("business"),0,100).toString().contains("PRIVATE_UNSUBMITTED_A1"),"private drafts never enter shared audit");
     var pending=f.pending(f.op,f.record("WUJIN","negative"),"待复核");
     check(p.audit(f.branch,new AccessPlatform.AuditFilter("business","","",pending.id(),null,null),0,100).stream().anyMatch(e->e.submissionId().equals(pending.id())),"workflow audit linked without duplicating writes");
     expect(IllegalArgumentException.class,()->p.audit(f.root,new AccessPlatform.AuditFilter("business","","","",LocalDate.of(2026,10,1),LocalDate.of(2026,9,1)),0,25));
@@ -103,7 +103,7 @@ public final class AccessPlatformTest {
       }
       st.execute("INSERT INTO access_requests VALUES('old-application','880000001','虚构旧申请','WUJIN','PENDING','2026-09-01T00:00:00Z',NULL,NULL)");
     }
-    try(PlatformStore store=new PlatformStore(dir)){String password=id();store.bootstrapSuperAdmin("880000002",password);var actor=store.authenticateUser("880000002",password).actor();check(store.schemaVersion()==8,"V2 upgrades to V8");check(store.access().applications(actor,true,0,25).get(0).number().equals("880000001"),"preallocated application data preserved");expect(IllegalArgumentException.class,()->store.access().apply("880000001","重复旧申请","JINTAN",Role.OPERATOR));check(store.access().applications(actor,true,0,25).size()==1,"V2 pending numbers backfilled");}
+    try(PlatformStore store=new PlatformStore(dir)){String password=id();store.bootstrapSuperAdmin("880000002",password);var actor=store.authenticateUser("880000002",password).actor();check(store.schemaVersion()==10,"V2 upgrades to V10");check(store.access().applications(actor,true,0,25).get(0).number().equals("880000001"),"preallocated application data preserved");expect(IllegalArgumentException.class,()->store.access().apply("880000001","重复旧申请","JINTAN",Role.OPERATOR));check(store.access().applications(actor,true,0,25).size()==1,"V2 pending numbers backfilled");}
     Path failed=Files.createTempDirectory("xinguan-a1-failed-upgrade-");expect(java.io.IOException.class,()->{try(var ignored=new PlatformStore(failed,Clock.systemUTC(),point->{if(point.equals("migration-3-step-2"))throw new IllegalStateException("synthetic fault");})) {throw new AssertionError("fault missing");}});
     expect(java.io.IOException.class,()->{try(var ignored=new PlatformStore(failed)) {throw new AssertionError("partial migration accepted");}});
   }

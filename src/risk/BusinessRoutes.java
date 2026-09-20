@@ -52,7 +52,7 @@ final class BusinessRoutes extends HttpSupport {
     if(!org.isEmpty())AccessPolicy.require(actor,AccessPolicy.Action.VIEW,org);
     if(!AccessPolicy.all(actor))org=actor.organizationId();q.put("organization",org);
     if(!q.getOrDefault("id","").isBlank()){
-      BusinessRecord row=store.platform.find(actor,q.get("id"));q.put("search",row.id());q.put("dataset",row.dataset());
+      BusinessRecord row=store.platform.find(actor,q.get("id"));if(!store.businessVisible(actor,row))throw new SecurityException("记录不存在或无权访问");q.put("search",row.id());q.put("dataset",row.dataset());
     }
     String dataset=q.getOrDefault("dataset","").strip();if(!dataset.isEmpty())DatasetSchema.get(dataset);
     LocalDate from=parseDate(q.get("from"),"开始日期"),through=parseDate(q.get("through"),"结束日期");

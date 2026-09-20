@@ -23,7 +23,7 @@ public class FeedbackDeadlinesTest {
       check(f.store.find(f.root,r.id()).version()==r.version(),"setting leaves official revision unchanged");
       var pending=f.pending(f.op,r,"synthetic pending");f.store.deadlines().save(f.root,"multi",period,"2026-09-23",2);
       check(f.w().submission(f.op,pending.id()).state()==WorkflowContracts.State.SUBMITTED,"setting does not freeze or invalidate submitted snapshot");
-      f.w().approve(f.review,pending.id(),id());check(f.store.find(f.op,r.id()).complete(),"workflow may complete after configuration");
+      f.w().approve(f.review,pending.id(),id());check(f.w().submission(f.op,pending.id()).state()==WorkflowContracts.State.PENDING_DIVISION&&!f.store.find(f.op,r.id()).complete(),"branch approval preserves the snapshot and awaits division after configuration");f.w().approve(f.div,pending.id(),id());check(f.store.find(f.op,r.id()).complete(),"workflow may complete after configuration and division publication");
       f.store.importRows(f.div,"multi",List.of(r),false,id());check(f.store.deadlines().visible(f.root).get(key).revision()==3,"reimport preserves configuration");
       var other=f.record("JINTAN","negative");var otherKey=new FeedbackDeadlines.Key("negative",other.period().key());
       f.store.deadlines().save(f.div,"negative",other.period().key(),"2026-09-24",0);
@@ -42,8 +42,8 @@ public class FeedbackDeadlinesTest {
       f.store.updateUser(f.root,f.div.userId(),f.div.identityRevision(),"changed",Role.DIVISION_ADMIN,"CZ",true);
       expect(SecurityException.class,()->f.store.deadlines().save(f.div,"multi",period,"2026-09-30",5));
       int records=f.store.list(f.root,null,null,null).size();f.store.close();
-      try(var c=connect(f.dir);var st=c.createStatement()){st.execute("DROP TABLE completion_rules");st.execute("DROP TABLE record_deletions");st.execute("DROP TABLE feedback_deadlines");st.execute("DELETE FROM schema_migrations WHERE version>=6");st.execute("DELETE FROM schema_migration_attempts WHERE version>=6");}
-      f.open();check(f.store.schemaVersion()==8&&f.store.list(f.root,null,null,null).size()==records&&f.store.deadlines().visible(f.root).isEmpty(),"V5 to V8 upgrade preserves records and starts unconfigured");
+      try(var c=connect(f.dir);var st=c.createStatement()){st.execute("DROP TABLE workflow_item_events");st.execute("DROP TABLE workflow_record_state");st.execute("ALTER TABLE submission_items DROP COLUMN workflow_state");st.execute("ALTER TABLE import_jobs DROP COLUMN selected_month");st.execute("DROP TABLE completion_rules");st.execute("DROP TABLE record_deletions");st.execute("DROP TABLE feedback_deadlines");st.execute("DELETE FROM schema_migrations WHERE version>=6");st.execute("DELETE FROM schema_migration_attempts WHERE version>=6");}
+      f.open();check(f.store.schemaVersion()==10&&f.store.list(f.root,null,null,null).size()==records&&f.store.deadlines().visible(f.root).isEmpty(),"V5 to V10 upgrade preserves records and starts unconfigured");
     }
     try(var f=new Fixture()){
       var row=f.record("WUJIN","multi");String period=row.period().key();var key=new FeedbackDeadlines.Key("multi",period);

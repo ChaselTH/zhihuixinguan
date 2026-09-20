@@ -71,7 +71,8 @@ public final class Feedback007RegressionTest {
     check(page(div,"/records/history?organization=WUJIN&dataset=negative&search=DIRECT_EDIT&offset=100").contains("HISTORY-"),"history route reaches tail page");
   }
   static void oldAndEmptyDrafts()throws Exception{
-    var record=platform.list(op.actor,"negative",null,null).get(0);
+    platform.importRows(div.actor,"negative",List.of(candidate("negative","WUJIN","DRAFT-HOST","2026-09")),false,id());
+    var record=platform.list(op.actor,"negative",null,null).stream().filter(r->r.values().get(DatasetSchema.get("negative").index("feedback")).isBlank()).findFirst().orElseThrow();
     for(int i=0;i<101;i++)platform.workflow().saveDraft(op.actor,"",0,"negative",List.of(new RecordChange(record.id(),record.version(),Map.of("feedback","DRAFT-"+i))),"",id());
     var beyond=platform.workflow().drafts(op.actor,"negative",100,1).get(0);var reopen=getWorkflow(op,"/workflow/edit?dataset=negative&draft="+beyond.id());
     check(reopen.status==200&&!reopen.body().contains("已提交并冻结"),"101st active draft opens by exact point lookup");

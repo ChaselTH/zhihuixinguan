@@ -29,16 +29,13 @@ public final class WorkflowReadModelTest {
         assertReadModel(data,op,other,root,dataset,field,"",completed,"returned");
         var resaved=workflow.saveDraft(op,draft.id(),1,dataset,List.of(new RecordChange(record.id(),record.version(),Map.of(field,text))),submission.id(),id());
         var again=workflow.confirm(op,workflow.previewDraft(op,resaved.id(),resaved.version()).id(),id());
-        workflow.approve(reviewer,again.id(),id());completed++;
-        assertReadModel(data,op,other,root,dataset,field,text,completed,"approved");
-        BusinessRecord current=store.find(reviewer,record.id());
-        var direct=workflow.previewDirect(reviewer,dataset,List.of(new RecordChange(record.id(),current.version(),Map.of(field,""))));
-        assertReadModel(data,op,other,root,dataset,field,text,completed,"direct preview");
-        workflow.confirm(reviewer,direct.id(),id());completed--;
-        assertReadModel(data,op,other,root,dataset,field,"",completed,"clear last formal value");
+        workflow.approve(reviewer,again.id(),id());
+        assertReadModel(data,op,other,root,dataset,field,"",completed,"branch approved, awaiting division");
+        workflow.approve(div,again.id(),id());completed++;
+        assertReadModel(data,op,other,root,dataset,field,text,completed,"division published");
       }
     }
-    System.out.println("WORKFLOW_READMODEL_OK assertions="+assertions+" dashboard counts and real XLSX exports across draft, pending, returned, approved and direct states");
+    System.out.println("WORKFLOW_READMODEL_OK assertions="+assertions+" dashboard counts and real XLSX exports across draft, pending, returned, two-stage review and final publication");
   }
   private static ActorContext user(PlatformStore store,ActorContext root,Role role,String org) {
     var u=store.createUser(root,String.format("%09d",++sequence+10),"虚构展示测试"+sequence,role,org).user();

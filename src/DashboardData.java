@@ -4,15 +4,19 @@ import xinguan.platform.*;
 
 final class DashboardData {
   final RangeSelection range;final List<String> months;final List<ImportRecord> records;
+  final ActorContext actor;
   final List<RowRef> multiRows=new ArrayList<>(),negativeRows=new ArrayList<>(),crossRows=new ArrayList<>();
   final Map<String,BranchStats> branches=new LinkedHashMap<>();
   final Map<String,Set<String>> requiredFields=new LinkedHashMap<>();
   String latestUpdate="";BigDecimal loanBalance=BigDecimal.ZERO;
   DashboardData(RangeSelection range,List<String> months,List<ImportRecord> all,List<ImportRecord> records){
-    this(range,months,all,records,Map.of());
+    this(range,months,all,records,Map.of(),null);
   }
   DashboardData(RangeSelection range,List<String> months,List<ImportRecord> all,List<ImportRecord> records,Map<String,CompletionRules.Setting> rules){
-    this.range=range;this.months=months;this.records=records;
+    this(range,months,all,records,rules,null);
+  }
+  DashboardData(RangeSelection range,List<String> months,List<ImportRecord> all,List<ImportRecord> records,Map<String,CompletionRules.Setting> rules,ActorContext actor){
+    this.range=range;this.months=months;this.records=records;this.actor=actor;
     for(var schema:DatasetSchema.all())requiredFields.put(schema.id,rules.containsKey(schema.id)?rules.get(schema.id).requiredFields():Set.of());
     for(String name:Organizations.BRANCHES.values())branches.put(name,new BranchStats(name));
     for(ImportRecord r:records){
@@ -34,7 +38,7 @@ final class DashboardData {
   List<RowRef> filtered(String dataset,String q,String branch,String completion){
     String status=BusinessFilter.completion(completion);
     List<RowRef> result=new ArrayList<>();DatasetSchema s=DatasetSchema.get(dataset);String needle=q==null?"":q.strip().toLowerCase(Locale.ROOT);
-    for(RowRef ref:rows(dataset)){if(branch!=null&&!branch.isBlank()&&!branch.equals(s.value(ref.values,s.branchColumn)))continue;
+    for(RowRef ref:rows(dataset)){if(actor!=null&&!AccessPolicy.all(actor)&&!ref.visiblePending())continue;if(branch!=null&&!branch.isBlank()&&!branch.equals(s.value(ref.values,s.branchColumn)))continue;
       if(status.equals("complete")&&!ref.complete()||status.equals("incomplete")&&ref.complete())continue;
       if(status.equals("overdue")&&!ref.overdue())continue;
       if(needle.isEmpty()||ref.values.stream().anyMatch(v->v.toLowerCase(Locale.ROOT).contains(needle)))result.add(ref);
@@ -44,7 +48,7 @@ final class DashboardData {
     Map<String,FeedbackPeriod> grouped=new LinkedHashMap<>();
     for(ImportRecord r:records){
       FeedbackPeriod p=grouped.computeIfAbsent(r.dataset+"\n"+r.period,k->new FeedbackPeriod(r));
-      for(List<String> values:r.rows){p.total++;if(DatasetSchema.get(r.dataset).complete(values,r.requiredFields))p.completed++;}
+      for(int i=0;i<r.rows.size();i++){RowRef row=new RowRef(r,i,r.rows.get(i));p.total++;if(row.complete())p.completed++;}
     }
     return grouped.values().stream().sorted(Comparator.comparing((FeedbackPeriod p)->p.period).reversed().thenComparingInt(p->List.of("multi","negative","cross").indexOf(p.dataset))).toList();
   }
@@ -55,7 +59,7 @@ final class DashboardData {
     String reminder(){return total==completed?"本期已全部完成":FeedbackTiming.remaining(due,asOf);}
   }
   int totalCount(){return multiRows.size()+negativeRows.size()+crossRows.size();}
-  int completedCount(){int total=0;for(ImportRecord r:records)for(List<String> row:r.rows)if(DatasetSchema.get(r.dataset).complete(row,r.requiredFields))total++;return total;}
+  int completedCount(){int total=0;for(ImportRecord r:records)for(int i=0;i<r.rows.size();i++)if(new RowRef(r,i,r.rows.get(i)).complete())total++;return total;}
   int completionPercent(){return totalCount()==0?0:completedCount()*100/totalCount();}
   String loanText(){return loanBalance.setScale(2,RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()+" 万元";}
   static String cell(List<String> row,int i){return i>=0&&i<row.size()&&row.get(i)!=null?row.get(i):"";}

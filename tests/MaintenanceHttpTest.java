@@ -32,7 +32,7 @@ final class MaintenanceHttpTest {
     check(!get(search).body().contains("RC7虚构人员")&&get("/people").body().contains("RC7虚构人员"),"cleared audit but account kept");
     use(division);check(get("/imports").body().contains("/imports/delete"),"monthly deletion accessible from data updates");
     for(String type:List.of("multi","negative","cross")){
-      var imported=HttpSmokeTest.upload(type,workbook(type),csrf());check(imported.statusCode()==200,"synthetic month import preview");
+      var imported=ImportHttpTest.uploadBundleFiles(List.of(workbook(type)),List.of("RC7-"+type+".xlsx"),csrf(),"2027-12");check(imported.statusCode()==200,"synthetic month import preview uses chosen archive month");
       var token=HttpSmokeTest.hidden(imported.body()).get("token");check(post("/imports/confirm",Map.of("csrf",csrf(),"token",token,"mode","preserve")).statusCode()==303,"synthetic month import");
     }
     check(get("/imports/delete").body().contains("2027-12"),"month selector uses data periods");

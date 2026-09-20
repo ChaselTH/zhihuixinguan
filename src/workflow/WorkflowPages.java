@@ -18,10 +18,10 @@ final class WorkflowPages extends PageLayout {
     b.append("</div><div class=\"workflow-metrics clearfix\">")
       .append(metric("最近草稿",drafts.size(),actor.role()==Role.OPERATOR?"最多显示 10 条；全部草稿见列表":"当前角色不使用草稿"))
       .append(metric("近期提交",submissions.size(),"正式快照与状态"))
-      .append(metric("近期复核待办",pending.size(),actor.role()==Role.REVIEWER?"全部待办请打开复核列表":"仅复核员处理"))
+      .append(metric(actor.role()==Role.DIVISION_ADMIN?"近期分行终审待办":"近期复核待办",pending.size(),actor.role()==Role.REVIEWER||actor.role()==Role.DIVISION_ADMIN?"打开审核待办查看待处理内容":"当前角色无需审核"))
       .append("</div>");
     if(actor.role()==Role.OPERATOR)b.append(draftPanel(drafts));
-    if(actor.role()==Role.REVIEWER)b.append(submissionPanel("本支行复核待办",pending,true));
+    if(actor.role()==Role.REVIEWER||actor.role()==Role.DIVISION_ADMIN)b.append(submissionPanel(actor.role()==Role.REVIEWER?"本支行复核待办":"分行终审待办",pending,true));
     b.append(submissionPanel(actor.role()==Role.OPERATOR?"我的提交":"近期提交",submissions,false));
     return shell("工作流工作台","home",b.toString());
   }
@@ -85,14 +85,15 @@ final class WorkflowPages extends PageLayout {
     b.append("<div class=\"workflow-callout warning\"><strong>确认有效期至 ").append(e(dateTime(preview.expiresAt()))).append("</strong><br>预览不会创建待办；正式值仍未改变。草稿或正式记录发生变化后必须重新预览。</div>");
     b.append(diffTable(preview.rows()));
     b.append("<form class=\"workflow-confirm\" method=\"post\" action=\"/workflow/confirm\">").append(hidden("csrf",session.csrf)).append(hidden("previewId",preview.id())).append(hidden("requestId",requestId("confirm",preview.id())))
-      .append("<div><strong>").append(preview.mode()==Mode.REVIEW?"提交复核":"直接生效").append("</strong><p>").append(preview.mode()==Mode.REVIEW?"确认后生成不可变提交单，等待本支行复核员处理。":"确认后正式值、审计和通知将在同一事务中完成，无需他人批准。").append("</p></div><button class=\"btn btn-primary\" type=\"submit\">确认").append(preview.mode()==Mode.REVIEW?"提交复核":"并使修改生效").append("</button></form>");
+      .append("<div><strong>").append(preview.mode()==Mode.REVIEW?"提交复核":session.actor.role()==Role.DIVISION_ADMIN?"分行终审并发布":"提交分行终审").append("</strong><p>").append(preview.mode()==Mode.REVIEW?"确认后生成不可变提交单，等待本支行复核员处理。":session.actor.role()==Role.DIVISION_ADMIN?"分行管理员确认后正式值、审计和通知将在同一事务中发布。":"支行修改将作为不可变快照送分行终审，确认时不改正式值。").append("</p></div><button class=\"btn btn-primary\" type=\"submit\">确认").append(preview.mode()==Mode.REVIEW?"提交复核":session.actor.role()==Role.DIVISION_ADMIN?"并发布":"并送分行终审").append("</button></form>");
     String back=!returnUrl.isEmpty()?returnUrl:preview.mode()==Mode.REVIEW?"/workflow/edit?dataset="+u(preview.dataset())+"&draft="+u(preview.draftId()):"/details?dataset="+u(preview.dataset());
     b.append("<p class=\"workflow-back\"><a ").append(preview.mode()!=Mode.REVIEW?"data-back=\"yes\" ":"").append("href=\"").append(e(back)).append("\">返回修改</a></p>");
     return shell("确认修改","preview",b.toString());
   }
 
   String submissions(List<Submission> rows,String dataset,String organization,State state,LocalDate from,LocalDate through,boolean mine,int page,boolean pending,String notice) {
-    StringBuilder b=new StringBuilder(message(notice,false));b.append("<div class=\"workflow-title\"><span class=\"workflow-eyebrow\">").append(pending?"REVIEW QUEUE":"SUBMISSION LEDGER").append("</span><h1>").append(pending?"本支行复核待办":mine?"我的提交":"提交记录").append("</h1><p>").append(pending?"通知已读不会移除待办；每张单据必须明确批准或退回。":"列表只展示当前账号获准查看的机构范围。").append("</p></div>");
+    String pendingTitle=session.actor.role()==Role.DIVISION_ADMIN?"分行终审待办":"本支行复核待办";
+    StringBuilder b=new StringBuilder(message(notice,false));b.append("<div class=\"workflow-title\"><span class=\"workflow-eyebrow\">").append(pending?"REVIEW QUEUE":"SUBMISSION LEDGER").append("</span><h1>").append(pending?pendingTitle:mine?"我的提交":"提交记录").append("</h1><p>").append(pending?"通知已读不会移除待办；每张单据必须明确处理。":"列表只展示当前账号获准查看的机构范围。").append("</p></div>");
     b.append(submissionFilter(dataset,organization,state,from,through,mine,pending));
     b.append(submissionPanel(pending?"待处理单据":"查询结果",rows,pending));
     if(page>1||rows.size()==30)b.append(pager(submissionLink(dataset,organization,state,from,through,mine,pending),page,page+(rows.size()==30?1:0),-1));
@@ -102,17 +103,25 @@ final class WorkflowPages extends PageLayout {
   String submission(Submission submission,String notice) {
     StringBuilder b=new StringBuilder(message(notice,false));
     b.append("<div class=\"workflow-title clearfix\"><div><span class=\"workflow-eyebrow\">IMMUTABLE SUBMISSION</span><h1>").append(e(DatasetSchema.get(submission.dataset()).label)).append(" · ").append(e(stateLabel(submission.state()))).append("</h1><p>单号 ").append(e(submission.id())).append(" · ").append(e(Organizations.label(submission.organizationId()))).append(" · ").append(e(dateTime(submission.createdAt()))).append("</p></div><span class=\"workflow-status ").append(stateClass(submission.state())).append("\">").append(e(stateLabel(submission.state()))).append("</span></div>");
-    b.append("<div class=\"workflow-summary clearfix\"><div><span>提交人</span><strong>").append(e(submission.ownerName())).append("</strong></div><div><span>处理方式</span><strong>").append(submission.mode()==Mode.REVIEW?"复核流程":"本人直接生效").append("</strong></div><div><span>记录／字段</span><strong>").append(submission.rows().size()).append(" / ").append(countChanges(submission.rows())).append("</strong></div><div><span>决定人</span><strong>").append(e(submission.reviewerName().isBlank()?"尚未处理":submission.reviewerName())).append("</strong></div></div>");
+    b.append("<div class=\"workflow-summary clearfix\"><div><span>提交人</span><strong>").append(e(submission.ownerName())).append("</strong></div><div><span>处理方式</span><strong>").append(submission.mode()==Mode.REVIEW?"操作员两级审核":submission.mode()==Mode.IMPORT?"导入填报两级审核":submission.state()==State.PENDING_DIVISION?"支行修改送分行终审":session.actor.role()==Role.DIVISION_ADMIN?"分行终审发布":"分行管理员修改").append("</strong></div><div><span>记录／字段</span><strong>").append(submission.rows().size()).append(" / ").append(countChanges(submission.rows())).append("</strong></div><div><span>最近处理人</span><strong>").append(e(submission.reviewerName().isBlank()?"尚未处理":submission.reviewerName())).append("</strong></div></div>");
     if(submission.state()==State.RETURNED)b.append("<div class=\"workflow-callout error\"><strong>退回原因</strong><br>").append(e(submission.reason())).append("</div>");
     if(!submission.priorSubmissionId().isEmpty())b.append("<div class=\"workflow-callout\">本单由已退回单 <a href=\"/workflow/submission?id=").append(u(submission.priorSubmissionId())).append("\">").append(e(shortId(submission.priorSubmissionId()))).append("</a> 修订后重新提交。</div>");
-    b.append(diffTable(submission.rows()));
-    if(submission.state()==State.SUBMITTED&&session.actor.role()==Role.REVIEWER) {
-      b.append("<div class=\"workflow-review-grid clearfix\"><form method=\"post\" action=\"/workflow/review/approve\" class=\"workflow-review-card approve\">").append(hidden("csrf",session.csrf)).append(hidden("submissionId",submission.id())).append(hidden("requestId",requestId("approve",submission.id()))).append("<h2>批准整单</h2><p>批准前将重新校验全部正式行版本；任一冲突都会整单回滚。</p><button class=\"btn btn-primary\" type=\"submit\">确认批准</button></form>")
-        .append("<form method=\"post\" action=\"/workflow/review/reject\" class=\"workflow-review-card reject\">").append(hidden("csrf",session.csrf)).append(hidden("submissionId",submission.id())).append(hidden("requestId",requestId("reject",submission.id()))).append("<h2>退回修改</h2><label>退回原因（必填）<textarea name=\"reason\" rows=\"4\" maxlength=\"2000\"></textarea></label><button class=\"btn btn-light\" type=\"submit\">确认退回</button></form></div>");
-    }
+    b.append(submissionItems(submission));
     if(submission.state()==State.RETURNED&&submission.ownerId().equals(session.actor.userId())&&!submission.draftId().isEmpty())b.append("<div class=\"workflow-next\"><a class=\"btn btn-primary\" href=\"/workflow/edit?dataset=").append(u(submission.dataset())).append("&amp;draft=").append(u(submission.draftId())).append("&amp;prior=").append(u(submission.id())).append("\">恢复草稿并修订</a></div>");
     if(submission.state()!=State.SUBMITTED)b.append("<p class=\"workflow-audit-link\"><a href=\"/audit?submissionId=").append(u(submission.id())).append("\">查看公共审计记录</a> <span>（按当前账号权限查询）</span></p>");
     return shell("提交详情","submission",b.toString());
+  }
+
+  String reopen(BusinessRecord row,String notice) {
+    DatasetSchema schema=DatasetSchema.get(row.dataset());String customer=schema.value(row.values(),schema.customerColumn);StringBuilder b=new StringBuilder(message(notice,false));
+    b.append("<div class=\"workflow-title clearfix\"><h1>终审后退回修改 · ").append(e(schema.label)).append("</h1><p>").append(e(customer)).append(" · ").append(e(row.period().key())).append(" · 正式版本 ").append(row.version()).append("</p></div>");
+    if(row.workflowStage()==RowStage.RETURNED)b.append("<div class=\"workflow-callout warning\"><strong>该行已重新开放为支行待处理。</strong><p>退回原因：").append(e(row.workflowReason())).append("</p><p>原正式值与版本保持不变；支行完成修订并按新流程送审后才会重新计算完成。</p></div><p><a class=\"btn btn-primary\" href=\"/details?dataset=").append(u(row.dataset())).append("&amp;month=").append(u(java.time.YearMonth.from(row.period().start()).toString())).append("&amp;q=").append(u(customer)).append("\">返回业务待处理清单</a></p>");
+    else {
+      b.append("<div class=\"workflow-callout warning\"><strong>正式值尚未改变。</strong><p>确认后只重新打开这一行；当前正式值及版本保留供核对，并从正式完成数中扣除。退回理由会记录到审计和行级历史。</p></div>")
+        .append("<form method=\"post\" action=\"/workflow/reopen\" class=\"workflow-review-card reject\">").append(hidden("csrf",session.csrf)).append(hidden("recordId",row.id())).append(hidden("expectedVersion",""+row.version())).append(hidden("requestId",UUID.randomUUID().toString()))
+        .append("<label>终审退回原因（必填）<textarea name=\"reason\" rows=\"4\" maxlength=\"2000\" required=\"required\"></textarea></label><label class=\"workflow-check\"><input type=\"checkbox\" name=\"confirm\" value=\"yes\" required=\"required\">确认只退回此行；原正式值不清空</label><button class=\"btn btn-light\" type=\"submit\">确认退回支行</button></form>");
+    }
+    return shell("终审后退回修改","submission",b.toString());
   }
 
   String problem(int status,String message,List<Conflict> conflicts) {
@@ -131,7 +140,7 @@ final class WorkflowPages extends PageLayout {
     if(session.actor.role()==Role.OPERATOR||canDirect(session.actor))content.append(tab("/details?dataset=multi",session.actor.role()==Role.OPERATOR?"草稿填报":"直接修改","edit",active));
     if(session.actor.role()==Role.OPERATOR)content.append(tab("/workflow/drafts","全部草稿","drafts",active));
     content.append(tab("/workflow/submissions",session.actor.role()==Role.OPERATOR?"我的提交":"提交记录","submissions",active));
-    if(session.actor.role()==Role.REVIEWER)content.append(tab("/workflow/reviews","复核待办","reviews",active));
+    if(session.actor.role()==Role.REVIEWER||session.actor.role()==Role.DIVISION_ADMIN)content.append(tab("/workflow/reviews",session.actor.role()==Role.REVIEWER?"复核待办":"分行终审","reviews",active));
     content.append("</div></div>");if(!active.equals("home"))content.append(backButton("/workflow"));content.append(body).append("</div>");
     String html=page(title,content.toString());return html.replace("<link rel=\"stylesheet\" href=\"/assets/foundation.css\">","<link rel=\"stylesheet\" href=\"/assets/foundation.css\"><link rel=\"stylesheet\" href=\"/assets/workflow.css\"><script src=\"/assets/workflow.js\"></script>");
   }
@@ -205,21 +214,50 @@ final class WorkflowPages extends PageLayout {
     return b.toString();
   }
 
+  private String submissionItems(Submission submission) {
+    boolean branch=session.actor.role()==Role.REVIEWER,division=session.actor.role()==Role.DIVISION_ADMIN;
+    RowStage actionable=branch?RowStage.BRANCH_REVIEW:division?RowStage.DIVISION_REVIEW:null;
+    List<String> selected=new ArrayList<>();StringBuilder b=new StringBuilder();
+    b.append("<div class=\"workflow-items\"><h2>逐行审核范围</h2><p>每个按钮只处理它对应的记录；批量操作会显示准确条数并在一个事务内全成或全回滚。</p>");
+    for(SnapshotRow row:submission.rows()) {
+      String recordId=row.before().id();RowStage stage=submission.rowStages().getOrDefault(recordId,RowStage.LEGACY_PUBLISHED);
+      DatasetSchema schema=DatasetSchema.get(row.before().dataset());
+      b.append("<section class=\"workflow-branch-snapshot\"><h3>").append(e(schema.value(row.before().values(),schema.customerColumn))).append(" · ").append(e(row.before().period().key())).append("</h3><p class=\"workflow-status ").append(stageClass(stage)).append("\">").append(e(stageLabel(stage))).append("</p><div class=\"workflow-table-scroll\"><table class=\"workflow-table workflow-diff-table\"><thead><tr><th>字段</th><th>当前正式值</th><th>本次拟发布值</th></tr></thead><tbody>");
+      for(FieldDiff field:row.fields())b.append("<tr><td>").append(e(field.title())).append("</td><td class=\"workflow-before\">").append(e(blankLabel(field.before()))).append("</td><td class=\"workflow-after\">").append(e(blankLabel(field.after()))).append("</td></tr>");
+      b.append("</tbody></table></div>");
+      if(actionable!=null&&stage==actionable) {
+        selected.add(recordId);String approveTitle=branch?"复核通过并提交分行":"终审通过并发布";String action=branch?"branch":"division";
+        b.append("<div class=\"workflow-review-grid clearfix\"><form method=\"post\" action=\"/workflow/review/approve\" class=\"workflow-review-card approve\">").append(hidden("csrf",session.csrf)).append(hidden("submissionId",submission.id())).append(hidden("recordIds",recordId)).append(hidden("requestId",requestId(action+"-approve",submission.id()+"-"+recordId))).append("<button class=\"btn btn-primary\" type=\"submit\">").append(e(approveTitle)).append("（仅此行）</button></form>")
+          .append("<form method=\"post\" action=\"/workflow/review/reject\" class=\"workflow-review-card reject\">").append(hidden("csrf",session.csrf)).append(hidden("submissionId",submission.id())).append(hidden("recordIds",recordId)).append(hidden("requestId",requestId(action+"-reject",submission.id()+"-"+recordId))).append("<label>退回原因（必填）<textarea name=\"reason\" rows=\"2\" maxlength=\"2000\" required=\"required\"></textarea></label><button class=\"btn btn-light\" type=\"submit\">退回此行</button></form></div>");
+      }
+      b.append("</section>");
+    }
+    if(actionable!=null&&selected.size()>1) {
+      String ids=String.join(",",selected);String scope=UUID.nameUUIDFromBytes(ids.getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();String action=branch?"branch":"division";String approveTitle=branch?"批量复核并提交分行":"批量终审并发布";
+      b.append("<div class=\"workflow-review-grid clearfix\"><form method=\"post\" action=\"/workflow/review/approve\" class=\"workflow-review-card approve\">").append(hidden("csrf",session.csrf)).append(hidden("submissionId",submission.id())).append(hidden("recordIds",ids)).append(hidden("requestId",requestId(action+"-approve-batch",submission.id()+"-"+scope))).append("<h2>").append(e(approveTitle)).append("</h2><p>明确处理当前仍处于此阶段的 ").append(selected.size()).append(" 行；版本冲突时全部回滚。</p><button class=\"btn btn-primary\" type=\"submit\">确认处理 ").append(selected.size()).append(" 行</button></form>")
+        .append("<form method=\"post\" action=\"/workflow/review/reject\" class=\"workflow-review-card reject\">").append(hidden("csrf",session.csrf)).append(hidden("submissionId",submission.id())).append(hidden("recordIds",ids)).append(hidden("requestId",requestId(action+"-reject-batch",submission.id()+"-"+scope))).append("<h2>批量退回 ").append(selected.size()).append(" 行</h2><label>同一退回原因（必填）<textarea name=\"reason\" rows=\"3\" maxlength=\"2000\" required=\"required\"></textarea></label><button class=\"btn btn-light\" type=\"submit\">确认整批退回</button></form></div>");
+    }
+    return b.append("</div>").toString();
+  }
+  private static String stageLabel(RowStage stage){return switch(stage){case READY->"待支行处理";case BRANCH_REVIEW->"待支行复核";case DIVISION_REVIEW->"待分行终审";case RETURNED->"退回待修改";case PUBLISHED->"已终审发布";case LEGACY_PUBLISHED->"旧版正式保留";};}
+  private static String stageClass(RowStage stage){return switch(stage){case READY,RETURNED->"returned";case BRANCH_REVIEW,DIVISION_REVIEW->"pending";case PUBLISHED,LEGACY_PUBLISHED->"approved";};}
+
   private String actionBar(boolean draftMode) {
     if(draftMode)return "<div class=\"workflow-action-bar clearfix\"><div><strong>当前页填写</strong><span>保存会与其他分页的草稿差异合并；提交前仍会先展示服务端差异。</span></div><button class=\"btn btn-primary\" type=\"submit\" name=\"intent\" value=\"preview\">提交</button><button class=\"btn btn-light\" type=\"submit\" name=\"intent\" value=\"save\">保存草稿</button></div>";
-    return "<div class=\"workflow-action-bar clearfix\"><div><strong>本人直接修改</strong><span>下一步先预览差异；确认后才会原子写入正式值。</span></div><button class=\"btn btn-primary\" type=\"submit\">预览修改</button></div>";
+    String outcome=session.actor.role()==Role.DIVISION_ADMIN?"分行管理员确认后直接终审发布。":"确认后先作为不可变快照送分行终审，正式值暂不改变。";
+    return "<div class=\"workflow-action-bar clearfix\"><div><strong>本人修改</strong><span>下一步先预览差异；"+outcome+"</span></div><button class=\"btn btn-primary\" type=\"submit\">预览修改</button></div>";
   }
 
   private static String fieldValue(DatasetSchema schema,BusinessRecord row,SnapshotRow saved,DatasetSchema.Field field) {if(saved!=null&&saved.change().values().containsKey(field.key()))return saved.change().values().get(field.key());return schema.value(row.values(),schema.index(field.key()));}
   private static int editableCount(DatasetSchema schema){int count=0;for(var field:schema.fields)if(field.editable())count++;return count;}
   private static int countChanges(List<SnapshotRow> rows){int count=0;for(var row:rows)count+=row.fields().size();return count;}
   private static boolean canDirect(ActorContext actor){return actor.role()==Role.DIVISION_ADMIN||actor.role()==Role.BRANCH_ADMIN||actor.role()==Role.REVIEWER;}
-  private static String stateLabel(State state){return switch(state){case SUBMITTED->"待复核";case APPROVED->"已通过";case RETURNED->"已退回";};}
-  private static String stateClass(State state){return switch(state){case SUBMITTED->"pending";case APPROVED->"approved";case RETURNED->"returned";};}
+  private static String stateLabel(State state){return switch(state){case SUBMITTED->"待支行复核";case PENDING_DIVISION->"待分行终审";case PARTIAL->"部分处理";case APPROVED->"已发布";case RETURNED->"已退回";};}
+  private static String stateClass(State state){return switch(state){case SUBMITTED,PENDING_DIVISION,PARTIAL->"pending";case APPROVED->"approved";case RETURNED->"returned";};}
   private static String blankLabel(String value){return value==null||value.isBlank()?"（空白）":value;}
   private static String shortId(String id){return id==null?"":id.substring(0,Math.min(8,id.length()));}
   private static String dateTime(Instant value){return value==null?"—":DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZONE).format(value);}
-  private static String roleGuide(Role role){return switch(role){case OPERATOR->"保存本人私人草稿，核对服务端差异后提交本支行复核。";case REVIEWER->"处理本支行待办，也可对本人授权数据进行差异确认后直接修改。";case DIVISION_ADMIN,BRANCH_ADMIN->"对授权范围内的数据先预览差异，再确认直接生效。";case SUPER_ADMIN->"查看授权提交记录；超级管理员不填写、不审批。";};}
+  private static String roleGuide(Role role){return switch(role){case OPERATOR->"查看并填写本支行待处理行；保存本人私人草稿，核对差异后提交支行复核。";case REVIEWER,BRANCH_ADMIN->"查看本支行待处理行并处理支行复核；本人修改确认后送分行终审，不会提前改变正式值。";case DIVISION_ADMIN->"查看全表并处理分行终审；本人修改经差异确认后直接终审发布。";case SUPER_ADMIN->"全域只读查看；超级管理员不填写、不审批。";};}
   private static String requestId(String action,String objectId){return action+"-"+objectId;}
   private static String tab(String href,String label,String name,String active){return "<a"+(name.equals(active)?" class=\"active\"":"")+" href=\""+href+"\">"+e(label)+"</a>";}
   private static String metric(String label,int value,String note){return "<div class=\"workflow-metric\"><span>"+e(label)+"</span><strong>"+value+"</strong><small>"+e(note)+"</small></div>";}

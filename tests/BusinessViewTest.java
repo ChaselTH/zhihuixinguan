@@ -33,26 +33,24 @@ public final class BusinessViewTest {
         assertExport(data,operator,dataset,"complete",0,"");assertExport(data,operator,dataset,"incomplete",1,"");
         var pending=workflow.confirm(operator,workflow.previewDraft(operator,draft.id(),draft.version()).id(),id());
         var sent=BusinessWorkflowState.load(platform,operator,List.of(row));check(sent.get(row.record.id).pending().id().equals(pending.id())&&sent.get(row.record.id).draft()==null,"submitted draft not mislabelled unsent");
-        var peerDraft=workflow.saveDraft(peer,"",0,dataset,List.of(new RecordChange(official.id(),official.version(),Map.of(field,"PEER-PENDING"))),"",id());
-        var peerPending=workflow.confirm(peer,workflow.previewDraft(peer,peerDraft.id(),peerDraft.version()).id(),id());
-        for(var person:List.of(operator,peer)){
-          var ownPending=BusinessWorkflowState.load(platform,person,List.of(row)).get(row.record.id);
-          check(ownPending.pending().ownerId().equals(person.userId())&&ownPending.draft()==null,"multiple operators retain own pending link without false draft badge");
-        }
-        workflow.reject(reviewer,peerPending.id(),"虚构同事退回",id());
+        expect(WorkflowException.class,()->workflow.saveDraft(peer,"",0,dataset,List.of(new RecordChange(official.id(),official.version(),Map.of(field,"PEER-PENDING"))),"",id()));
+        check(workflow.drafts(peer,dataset,0,10).isEmpty(),"parallel operator cannot create a second active task for an in-flight row");
         check(view(data,operator).completedCount()==0,"pending does not increase official completion");
         check(pages(reviewer).details(view(data,reviewer),filter(reviewer,dataset,"all"),1,BusinessWorkflowState.load(platform,reviewer,List.of(row))).contains("去复核"),"review entry attached to pending record");
         workflow.reject(reviewer,pending.id(),"B2-RETURN-REASON",id());
-        var returned=BusinessWorkflowState.load(platform,operator,List.of(row));check(returned.get(row.record.id).draft()!=null&&returned.get(row.record.id).pending()==null,"returned draft recoverable");
-        check(pages(operator).details(dashboard,filter(operator,dataset,"all"),1,returned).contains("最近提交：已退回"),"returned label separate from official completion");
+        dashboard=view(data,operator);row=dashboard.rows(dataset).get(0);var returned=BusinessWorkflowState.load(platform,operator,List.of(row));check(returned.get(row.record.id).draft()!=null&&returned.get(row.record.id).pending()==null,"returned draft recoverable");
+        var returnedPage=pages(operator).details(dashboard,filter(operator,dataset,"all"),1,returned);check(returnedPage.contains("退回待修改")&&returnedPage.contains("B2-RETURN-REASON"),"returned label and reason separate from official completion");
         var next=workflow.saveDraft(operator,draft.id(),draft.version(),dataset,List.of(new RecordChange(official.id(),official.version(),Map.of(field,"0"))),pending.id(),id());
         var approved=workflow.confirm(operator,workflow.previewDraft(operator,next.id(),next.version()).id(),id());workflow.approve(reviewer,approved.id(),id());
+        check(platform.find(operator,official.id()).values().get(DatasetSchema.get(dataset).index(field)).isBlank(),"branch review does not publish through business read model");workflow.approve(division,approved.id(),id());
         dashboard=view(data,operator);row=dashboard.rows(dataset).get(0);var resolved=BusinessWorkflowState.load(platform,operator,List.of(row));
         check(resolved.get(row.record.id).draft()==null&&resolved.get(row.record.id).pending()==null,"published draft no longer active");
-        check(dashboard.filtered(dataset,"","","complete").size()==1,"zero counts as completed formal fill");assertExport(data,operator,dataset,"complete",1,"0");assertExport(data,operator,dataset,"incomplete",0,"");
-        var completedHtml=pages(operator).details(dashboard,filter(operator,dataset,"complete"),1,resolved);check(completedHtml.contains("row-complete")&&completedHtml.contains("editable-cell"),"green formal row retains yellow cells");
+        check(dashboard.filtered(dataset,"","","complete").isEmpty(),"branch operator cannot see completed formal rows");assertExport(data,operator,dataset,"complete",0,"");assertExport(data,operator,dataset,"incomplete",0,"");
+        var divisionDashboard=view(data,division);var divisionRow=divisionDashboard.rows(dataset).get(0);var divisionState=BusinessWorkflowState.load(platform,division,List.of(divisionRow));
+        check(divisionDashboard.filtered(dataset,"","","complete").size()==1,"zero counts as completed formal fill for division administrator");assertExport(data,division,dataset,"complete",1,"0");
+        var completedHtml=pages(division).details(divisionDashboard,filter(division,dataset,"complete"),1,divisionState);check(completedHtml.contains("row-complete")&&completedHtml.contains("editable-cell"),"green formal row retains yellow cells");
         check(!pages(operator).dashboard(dashboard,resolved).contains("虚构测试企业 B2-OWN-"+dataset),"home excludes completed formal record for current dataset");
-        var current=platform.find(operator,official.id());workflow.confirm(reviewer,workflow.previewDirect(reviewer,dataset,List.of(new RecordChange(current.id(),current.version(),Map.of(field,"")))).id(),id());
+        var current=platform.find(division,official.id());workflow.confirm(division,workflow.previewDirect(division,dataset,List.of(new RecordChange(current.id(),current.version(),Map.of(field,"")))).id(),id());
         assertExport(data,operator,dataset,"incomplete",1,"");check(view(data,operator).filtered(dataset,"","","complete").isEmpty(),"clear last yellow resets completion");
         check(BusinessWorkflowState.load(platform,operator,view(data,operator).rows(dataset)).get(official.id()).draft()==null,"approved draft cannot reappear after later formal edits");
       }
@@ -63,7 +61,7 @@ public final class BusinessViewTest {
       var internal=new InternalPages("test",session(operator)).overview(view(data,operator),filter(operator,"cross","all"),BusinessWorkflowState.empty());check(internal.contains("行内报表 · 待配置")&&!internal.contains("dataset=negative"),"internal module does not masquerade risk schemas as unknown templates");
       for(var actor:List.of(root,division,branch,operator,reviewer))for(String completion:List.of("all","complete","incomplete"))for(var range:List.of(Map.of("scope","year","year","2026"),Map.of("scope","quarter","year","2026","quarter","3"),Map.of("scope","custom","start","2026-07","end","2026-09"))){
         Map<String,String> query=new HashMap<>(range);query.put("completion",completion);query.put("q","B2-OWN");query.put("branch","武进");query.put("dataset","multi");
-        var filter=BusinessFilter.from(actor,query);var dashboard=new DashboardData(RangeSelection.from(query,data.months(actor)),data.months(actor),List.of(),data.readRange(RangeSelection.from(query,data.months(actor)),actor));
+        var filter=BusinessFilter.from(actor,query);var dashboard=new DashboardData(RangeSelection.from(query,data.months(actor)),data.months(actor),List.of(),data.readRange(RangeSelection.from(query,data.months(actor)),actor),data.platform.completionRules().visible(actor),actor);
         check(new AuthorizedExportService(data).export(actor,query).count()==filter.rows(dashboard).size(),"all roles view/export use exact same filters");
         String html=pages(actor).details(dashboard,filter,1,BusinessWorkflowState.empty());check(html.contains("completion="+completion)&&html.contains("name=\"completion\"")&&html.contains("q=B2-OWN"),"export/range/search carry state");
       }
@@ -84,10 +82,10 @@ public final class BusinessViewTest {
     check(new AuthorizedExportService(data).export(operator,Map.of("dataset","multi","scope","year","year","2026","q","B2-PAGE","completion","incomplete")).count()==53,"export is full matching set not current page");
   }
   static void assertExport(DataStore data,ActorContext actor,String dataset,String completion,int count,String expected)throws Exception{
-    var result=new AuthorizedExportService(data).export(actor,Map.of("dataset",dataset,"scope","year","year","2026","completion",completion));check(result.count()==count,"formal export count "+completion);
+    var result=new AuthorizedExportService(data).export(actor,Map.of("dataset",dataset,"scope","year","year","2026","completion",completion));check(result.count()==count,"formal export count "+completion+" expected="+count+" actual="+result.count());
     try(Workbook wb=WorkbookFactory.create(new ByteArrayInputStream(result.bytes()))){var schema=DatasetSchema.get(dataset);check(wb.getNumberOfSheets()==1,"no private extra sheet");if(count>0)check(wb.getSheetAt(0).getRow(schema.headerRows).getCell(schema.index(dataset.equals("cross")?"cross_feedback":"feedback")).getStringCellValue().equals(expected),"formal export cell only");}
   }
-  static DashboardData view(DataStore data,ActorContext actor){var months=data.months(actor);var r=RangeSelection.from(Map.of("scope","year","year","2026"),months);return new DashboardData(r,months,List.of(),data.readRange(r,actor));}
+  static DashboardData view(DataStore data,ActorContext actor){var months=data.months(actor);var r=RangeSelection.from(Map.of("scope","year","year","2026"),months);return new DashboardData(r,months,List.of(),data.readRange(r,actor),data.platform.completionRules().visible(actor),actor);}
   static BusinessFilter filter(ActorContext a,String dataset,String completion){return BusinessFilter.from(a,Map.of("dataset",dataset,"completion",completion));}
   static AuthService.Session session(ActorContext a){var s=new AuthService.Session(id(),id(),Instant.now().getEpochSecond(),platform.sessionUser(a.userId()));s.safetyVersion=AccessPlatform.SAFETY_VERSION;return s;}
   static RiskPages pages(ActorContext a){return new RiskPages("test",session(a));}
