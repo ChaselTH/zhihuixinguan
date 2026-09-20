@@ -5,7 +5,8 @@
 - 领取：2026-09-20，FEEDBACK-009 修订 1（READY）。
 - GitHub `main` 基线：`78014d5680c7d8546b44c336ad4822f18c5e599e`；任务记录的产品源码基线：`7507f9a384753baa3ebca8719583fb0cea555de8`（`0.3.0-rc.10` / schema 8）。工作分支：`codex/v0.3-feedback-009`。
 - 实施前后均以仓库 `README.md` 顶部和任务文件为授权来源；未改任务入口、任务要求、版本或发布逻辑。
-- 交付状态：本地实现及验收完成，等待推送功能分支并创建面向 `main` 的 PR；不合并、不打包发布。
+- 交付状态：本地实现及验收完成，功能分支已推送，PR #12 面向 `main` 等待审查；不合并、不打包发布。
+- 本地功能提交：`87f8d78e40a67b7bb96adaf605bd420a5a97ee1c`。由于 Git smart-HTTP 推送连接被重置，GitHub Git Data API 创建的远端提交为 `87a1532026a6222ab016b75b0da26d376d9b99dd`；两者父提交均为 main 基线，tree SHA 完全一致：`21f4a7b8927f30c9f9e89242ca45cade8aaf082d`。已读取远端分支并核对 tree。
 
 ## 实现结果
 
@@ -47,6 +48,6 @@
 
 ## PR 与限制
 
-- 功能分支：`codex/v0.3-feedback-009`；PR：待创建，成功后在此补录地址与提交 SHA。
+- 功能分支：`codex/v0.3-feedback-009`；[PR #12](https://github.com/ChaselTH/zhihuixinguan/pull/12)，等待 ChaselTH 审查，未合并。
 - 没有真实业务数据、私人配置或用户运行服务参与测试；没有改 `VERSION`。
 - 视觉检查使用现代 Edge 的合成页面；它不能证明旧 IE／麒麟兼容。

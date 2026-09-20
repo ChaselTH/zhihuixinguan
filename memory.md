@@ -288,6 +288,7 @@
 - 原因：本机到 GitHub 的 Git smart-HTTP 传输链路不稳定，不是提交大小、权限、认证或仓库规则错误；GitHub REST 创建的提交消息末尾没有换行，而本地 `git commit-tree -m` 会补换行，因此 commit 对象 SHA 不同。
 - 解决：先逐个通过 GitHub Git Data API 创建并校验 blob，再基于精确基线创建相同 tree、commit 和分支 ref；以 tree SHA 证明文件内容一致，创建远端 ref 后 fetch 该对象并把本地分支指向远端提交。
 - 避免复发：推送连接重置时先保留本地提交并有限次重试；若 GitHub API 可用，使用可校验的 Git Data API 传输对象，并同时核对 blob、tree、parent；不要仅凭 commit SHA 不同判断内容偏差，也不要丢弃提交或重复创建 PR。
+- 2026-09-20 FEEDBACK-009 再现：普通 `git push` 再次连接重置；Git Data API 上传后先比对本地／远端 tree `21f4a7b8927f30c9f9e89242ca45cade8aaf082d`，确认文件树完全一致才建分支与 PR。REST 提交 SHA 与本地 Git SHA 可不同，回报必须同时标明并以 tree 相同作为内容一致证据；TLS 超时时先查分支／PR 状态，再重试，不能盲目重复创建 ref 或 PR。
 
 ## 2026-09-20：两级审核后旧业务视图断言仍允许支行看已完成行
 
