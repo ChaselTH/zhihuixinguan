@@ -65,10 +65,11 @@ final class WorkbookImporter {
       DataFormatter formatter=new DataFormatter(Locale.CHINA);
       for(Sheet sheet:workbook){
         boolean blank=true;for(Row row:sheet)for(Cell cell:row)if(!value(cell,formatter).isBlank()){blank=false;break;}
-        if(blank||guideSheet(sheet,formatter)){skipped++;continue;}
+        if(blank){skipped++;continue;}
         List<DatasetSchema> matches=new ArrayList<>();for(DatasetSchema schema:DatasetSchema.all())if(findHeader(sheet,schema,formatter)>=0)matches.add(schema);
         if(matches.size()>1){errors.add(new Issue(filename,sheet.getSheetName(),1,"表头","工作表同时匹配多类清单，无法安全识别"));continue;}
         if(matches.isEmpty()){
+          if(guideSheet(sheet,formatter)){skipped++;continue;}
           boolean has序号=false;for(int r=0;r<=Math.min(sheet.getLastRowNum(),8);r++)if("序号".equals(value(sheet.getRow(r)==null?null:sheet.getRow(r).getCell(0),formatter))){has序号=true;break;}
           errors.add(new Issue(filename,sheet.getSheetName(),has序号?1:0,"表头",has序号?"数据表表头与所有受支持清单均不匹配":"无法识别的非空工作表；请仅保留受支持数据表、说明页或空白页"));continue;
         }
@@ -81,9 +82,12 @@ final class WorkbookImporter {
     return new Report(errors.isEmpty()?sources:List.of(),skipped,errors.subList(0,Math.min(errors.size(),100)));
   }
   private static boolean guideSheet(Sheet sheet,DataFormatter formatter){
-    String name=sheet.getSheetName().toLowerCase(Locale.ROOT);if(name.contains("说明")||name.contains("模板")||name.contains("guide")||name.contains("readme")||name.contains("目录"))return true;
-    StringBuilder sample=new StringBuilder();for(int r=0;r<=Math.min(sheet.getLastRowNum(),20);r++){Row row=sheet.getRow(r);if(row!=null)for(int c=0;c<Math.min(8,Math.max(0,row.getLastCellNum()));c++)sample.append(value(row.getCell(c),formatter));}
-    return sample.toString().matches("(?s).*(填写说明|模板说明|使用说明|导入说明|填写指引|注意事项|本页说明).* ".trim());
+    // Only the complete, generated one-column guide is known to be non-business content.
+    // A renamed sheet or a keyword embedded in unknown rows is never a reason to discard it.
+    List<String> cells=new ArrayList<>();for(Row row:sheet){for(Cell cell:row)if(cell.getColumnIndex()!=0&&!value(cell,formatter).isBlank())return false;String text=value(row.getCell(0),formatter);if(!text.isBlank())cells.add(text);}
+    if(cells.equals(List.of(ExcelExporter.templateNotes("bundle")))||cells.equals(List.of(ExcelExporter.legacyTemplateNotes("bundle"))))return true;
+    for(DatasetSchema schema:DatasetSchema.all())if(cells.equals(List.of(ExcelExporter.templateNotes(schema.id)))||cells.equals(List.of(ExcelExporter.legacyTemplateNotes(schema.id))))return true;
+    return false;
   }
   private static String validatedMonth(String month){if(month==null||!month.matches("20\\d{2}-(0[1-9]|1[0-2])"))throw new IllegalArgumentException("请选择有效所属月份（YYYY-MM）");try{YearMonth.parse(month);}catch(RuntimeException e){throw new IllegalArgumentException("请选择有效所属月份（YYYY-MM）");}return month;}
   private record SheetStart(Sheet sheet,int row){}

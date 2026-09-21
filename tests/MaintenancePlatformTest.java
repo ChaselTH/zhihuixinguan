@@ -65,7 +65,8 @@ public final class MaintenancePlatformTest {
     check(f.store.deadlines().visible(f.root).isEmpty(),"deleted periods no longer expose feedback reminders");
     expect(IllegalArgumentException.class,()->f.store.find(f.div,a.id()));
     expect(WorkflowContracts.WorkflowException.class,()->f.w().previewDraft(f.op,draft.id(),draft.version()));
-    check(f.w().draft(f.op,draft.id()).rows().size()==1&&f.w().submission(f.root,pending.id()).rows().size()==1,"history and private draft not destroyed");
+    check(f.w().draft(f.op,draft.id()).rows().isEmpty()&&f.w().submission(f.root,pending.id()).rows().size()==1,"deleted draft content is hidden while authorized submission history survives");
+    try(var db=connect(f.dir);var st=db.prepareStatement("SELECT payload FROM drafts WHERE id=?")){st.setString(1,draft.id());try(var rs=st.executeQuery()){check(rs.next()&&WorkflowCodec.rows(rs.getString(1)).equals(draft.rows()),"deletion and response redaction preserve stored private draft exactly");}}
     expect(ConcurrentModificationException.class,()->f.store.importing().confirm(f.div,staged.id(),1,"saved",false,false));
     check(f.store.access().audit(f.branch,filter("business","","DATA_MONTH_DELETE"),0,100).size()==2,"monthly deletion trace remains branch-scoped");
     f.reopen();check(f.store.list(f.root,null,null,null).size()==1,"deletion survives restart");

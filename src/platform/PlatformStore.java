@@ -241,6 +241,7 @@ public final class PlatformStore implements RecordRepository, OfficialDataWriter
           BusinessRecord persisted=load(id,false);Map<String,String> proposal=filledImportValues(schema,candidate,persisted);
           if(!proposal.isEmpty())proposals.add(new WorkflowContracts.SnapshotRow(persisted,new RecordChange(id,persisted.version(),proposal)));
         } else {
+          if(old.workflowStage()==RowStage.BRANCH_REVIEW||old.workflowStage()==RowStage.DIVISION_REVIEW)throw new ConcurrentModificationException("导入范围包含待支行复核或待分行终审记录，本批全部未导入");
           duplicates++;List<String> values=new ArrayList<>(candidate.values());boolean kept=false;
           for(int i=0;i<schema.width();i++)if(schema.editable(i)&&!overwrite&&!old.values().get(i).isBlank()) {
             if(!old.values().get(i).equals(values.get(i)))kept=true;values.set(i,old.values().get(i));

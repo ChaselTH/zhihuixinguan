@@ -25,7 +25,8 @@ final class BusinessRowPresentation extends PageLayout {
     // Editing and trace are now page-level actions. Keep only the necessary review
     // queue link here; never expose another branch's row or private draft contents.
     if(state.pending()!=null)b.append("<a href=\"/workflow/submission?id=").append(u(state.pending().id())).append("\">").append(actor.role()==Role.REVIEWER?"去复核":"查看待复核单").append("</a>");
-    if(actor.role()==Role.DIVISION_ADMIN&&row.record.workflowStage==RowStage.PUBLISHED&&row.complete())b.append("<a href=\"/workflow/reopen?record=").append(u(row.record.id)).append("\">终审退回修改</a>");
+    if(actor.role()==Role.DIVISION_ADMIN&&(row.record.workflowStage==RowStage.PUBLISHED||row.record.workflowStage==RowStage.LEGACY_PUBLISHED)&&row.complete())b.append("<a href=\"/workflow/reopen?record=").append(u(row.record.id)).append("\">终审退回修改</a>");
+    if(actor.role()!=Role.SUPER_ADMIN&&row.record.workflowStage==RowStage.RETURNED)b.append("<a href=\"/workflow/reconfirm?record=").append(u(row.record.id)).append("\">核对后原值重提</a>");
     return b.toString();
   }
 }

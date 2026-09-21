@@ -43,7 +43,7 @@ public final class ImportPlatform {
       List<BusinessRecord> existing=store.list(a,bundle?null:dataset,null,null);Map<String,BusinessRecord> bySource=new HashMap<>();Map<String,Integer> similar=new HashMap<>();Set<String> ambiguous=new HashSet<>();
       for(var r:existing){String fp=PlatformStore.fingerprint(r);if(bySource.putIfAbsent(fp,r)!=null)ambiguous.add(fp);similar.merge(customerKey(r),1,Integer::sum);}
       for(var r:unique.values())similar.merge(customerKey(r.record()),1,Integer::sum);
-      Map<String,Integer> pending=new HashMap<>();try(var st=statement("SELECT record_id,COUNT(*) FROM pending_submission_records GROUP BY record_id");var rs=st.executeQuery()){while(rs.next())pending.put(rs.getString(1),rs.getInt(2));}
+      Map<String,Integer> pending=new HashMap<>();try(var st=statement("SELECT record_id,COUNT(*) FROM (SELECT record_id,submission_id FROM pending_submission_records UNION SELECT record_id,submission_id FROM workflow_record_state WHERE stage IN ('BRANCH_REVIEW','DIVISION_REVIEW')) tasks GROUP BY record_id");var rs=st.executeQuery()){while(rs.next())pending.put(rs.getString(1),rs.getInt(2));}
       String id=UUID.randomUUID().toString(),created=TIMESTAMP.format(clock.instant()),expires=TIMESTAMP.format(clock.instant().plus(Duration.ofMinutes(30)));
       exec("INSERT INTO import_jobs(id,owner_id,identity_revision,dataset,state,revision,created_at,expires_at,baseline,skipped_examples,repeated_rows,row_count,result_id,confirm_hash,selected_month) VALUES(?,?,?,?,'PREVIEW',1,?,?,?,?,?,?,NULL,NULL,?)",id,a.userId(),a.identityRevision(),dataset,created,expires,PlatformStore.baseline(existing),examples,repeated,unique.size(),selectedMonth);
       int n=0;for(var source:unique.values()){

@@ -73,7 +73,8 @@ public final class ImportPlatformTest {
     expect(ConcurrentModificationException.class,()->p.confirm(f.div,j.id(),1,"saved",false,false));
     check(WorkflowPlatformTest.value(f.store.find(f.op,r.id())).isEmpty(),"import conflict leaves both formal row and pending snapshot intact");
     f.w().approve(f.review,pending.id(),id());f.w().approve(f.div,pending.id(),id());
-    check(f.w().submission(f.op,pending.id()).state()==WorkflowContracts.State.APPROVED&&WorkflowPlatformTest.value(f.store.find(f.op,r.id())).equals("待审不丢失")&&f.w().draft(f.op,draft.id()).equals(draft),"import preserves immutable submission and private draft through final publication");
+    check(f.w().submission(f.op,pending.id()).state()==WorkflowContracts.State.APPROVED&&WorkflowPlatformTest.value(f.store.find(f.op,r.id())).equals("待审不丢失")&&f.w().draft(f.op,draft.id()).rows().isEmpty(),"publication preserves formal content while the old private URL hides completed snapshots");
+    try(var db=WorkflowPlatformTest.connect(f.dir);var st=db.prepareStatement("SELECT payload FROM drafts WHERE id=?")){st.setString(1,draft.id());try(var rs=st.executeQuery()){check(rs.next()&&WorkflowCodec.rows(rs.getString(1)).equals(draft.rows()),"redaction does not rewrite persisted private draft payload");}}
     var stale=stage(p,f.div,"cross",List.of(source(withFeedback(r,"不得覆盖"))),0);var current=f.store.find(f.div,r.id());WorkflowPlatformTest.publish(f.store,f.div,WorkflowPlatformTest.edit(current,"之后的新修改"));
     expect(ConcurrentModificationException.class,()->p.confirm(f.div,stale.id(),1,"overwrite",true,false));check(WorkflowPlatformTest.value(f.store.find(f.op,r.id())).equals("之后的新修改"),"changed baseline cannot overwrite current official");p.cancel(f.div,stale.id(),1);
     List<String> values=new ArrayList<>(r.values());values.set(0,"changed source sequence");var similar=new BusinessRecord("",0,r.dataset(),r.period(),r.organizationId(),values,"similar.xlsx",r.importedAt(),"",Map.of());

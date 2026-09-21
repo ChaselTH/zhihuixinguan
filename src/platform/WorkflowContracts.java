@@ -81,6 +81,10 @@ public final class WorkflowContracts {
     List<Draft> drafts(ActorContext actor, String dataset, int offset, int limit);
     Preview previewDraft(ActorContext actor, String draftId, long expectedVersion);
     Preview previewDirect(ActorContext actor, String dataset, List<RecordChange> changes);
+    /** Explicitly reconfirm the retained official values of one currently returned row. */
+    Preview previewReturned(ActorContext actor, String recordId, long expectedVersion);
+    /** Copies only active returned shared snapshot rows into a new private operator draft. */
+    Draft restoreReturned(ActorContext actor, String submissionId, List<String> recordIds, String requestId);
     Preview preview(ActorContext actor, String previewId);
     /** Only a stored preview ID is accepted: the client cannot replace its confirmed values. */
     Submission confirm(ActorContext actor, String previewId, String requestId);

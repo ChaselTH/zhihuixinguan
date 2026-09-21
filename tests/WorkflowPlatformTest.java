@@ -41,7 +41,7 @@ public final class WorkflowPlatformTest {
     check(f.store.find(f.div,w.id()).version()==2&&f.store.find(f.div,j.id()).version()==2,"exactly once updates both branches");
     check(f.n().unreadCount(f.div)==notices+1&&f.n().unreadCount(f.otherReview)==otherNotices,"multi-branch direct notice only to submitter");
     for(var actor:List.of(f.op,f.branch,f.review,f.otherOp,f.otherReview)){
-      var clipped=f.w().submission(actor,submitted.id());check(clipped.rows().size()==1&&clipped.rows().get(0).before().organizationId().equals(actor.organizationId()),"mixed submission cropped to actual branch");
+      var clipped=f.w().submission(actor,submitted.id());check(clipped.rows().isEmpty()&&clipped.rowStages().keySet().equals(Set.of(actor.organizationId().equals("WUJIN")?w.id():j.id())),"completed mixed submission exposes only own branch receipt, never business snapshots");
       var filter=new AccessPlatform.AuditFilter("business",actor.organizationId(),"multi","",null,null);
       check(f.store.access().auditForSubmission(actor,submitted.id(),filter,0,100).stream().allMatch(e->e.organization().equals(actor.organizationId())),"shared audit stays row scoped");
       check(f.w().auditTrail(actor,submitted.id()).stream().allMatch(e->e.recordId().equals(actor.organizationId().equals("WUJIN")?w.id():j.id())),"workflow audit cannot leak other branch row or division summary");

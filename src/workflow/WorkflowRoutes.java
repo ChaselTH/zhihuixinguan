@@ -26,7 +26,7 @@ final class WorkflowRoutes {
 
   boolean get(HttpExchange x,AuthService.Session session,Map<String,String> query)throws Exception {
     String path=x.getRequestURI().getPath();
-    if(!Set.of("/workflow","/workflow/drafts","/workflow/edit","/workflow/preview","/workflow/submissions","/workflow/reviews","/workflow/submission","/workflow/reopen").contains(path))return false;
+    if(!Set.of("/workflow","/workflow/drafts","/workflow/edit","/workflow/preview","/workflow/submissions","/workflow/reviews","/workflow/submission","/workflow/reopen","/workflow/reconfirm").contains(path))return false;
     WorkflowPages pages=pages(session);
     try {
       switch(path) {
@@ -42,7 +42,8 @@ final class WorkflowRoutes {
         case "/workflow/submissions" -> send(x,200,submissions(pages,session,query,false));
         case "/workflow/reviews" -> send(x,200,submissions(pages,session,query,true));
         case "/workflow/submission" -> send(x,200,pages.submission(workflow.submission(session.actor,required(query,"id")),notice(query)));
-        case "/workflow/reopen" -> {AccessPolicy.require(session.actor,AccessPolicy.Action.DIVISION_REVIEW,Organizations.DIVISION);BusinessRecord row=store.find(session.actor,required(query,"record"));if(row.workflowStage()==RowStage.PUBLISHED&&!store.completionRules().visible(session.actor).get(row.dataset()).complete(row.values()))throw new IllegalArgumentException("该行尚未满足正式完成规则，无需执行终审重开");if(row.workflowStage()!=RowStage.PUBLISHED&&row.workflowStage()!=RowStage.RETURNED)throw new IllegalArgumentException("只能查看已终审退回或重开的记录");send(x,200,pages.reopen(row,notice(query)));}
+        case "/workflow/reopen" -> {AccessPolicy.require(session.actor,AccessPolicy.Action.DIVISION_REVIEW,Organizations.DIVISION);BusinessRecord row=store.find(session.actor,required(query,"record"));if((row.workflowStage()==RowStage.PUBLISHED||row.workflowStage()==RowStage.LEGACY_PUBLISHED)&&!store.completionRules().visible(session.actor).get(row.dataset()).complete(row.values()))throw new IllegalArgumentException("该行尚未满足正式完成规则，无需执行终审重开");if(row.workflowStage()!=RowStage.PUBLISHED&&row.workflowStage()!=RowStage.LEGACY_PUBLISHED&&row.workflowStage()!=RowStage.RETURNED)throw new IllegalArgumentException("只能查看正式已完成或退回的记录");send(x,200,pages.reopen(row,notice(query)));}
+        case "/workflow/reconfirm" -> {BusinessRecord row=store.find(session.actor,required(query,"record"));if(!canEditStage(session.actor,row)||row.workflowStage()!=RowStage.RETURNED)throw new SecurityException("该记录当前不在可核对的退回范围");send(x,200,pages.reconfirm(row));}
         default -> { return false; }
       }
       return true;
@@ -53,12 +54,21 @@ final class WorkflowRoutes {
 
   boolean post(HttpExchange x,AuthService.Session session,Map<String,String> form)throws Exception {
     String path=x.getRequestURI().getPath();
-    if(!Set.of("/workflow/draft/save","/workflow/direct/preview","/workflow/confirm","/workflow/review/approve","/workflow/review/reject","/workflow/reopen").contains(path))return false;
+    if(!Set.of("/workflow/draft/save","/workflow/direct/preview","/workflow/confirm","/workflow/review/approve","/workflow/review/reject","/workflow/reopen","/workflow/reconfirm","/workflow/returned/restore").contains(path))return false;
     WorkflowPages pages=pages(session);
     try {
       switch(path) {
         case "/workflow/draft/save" -> saveDraft(x,pages,session,form);
         case "/workflow/direct/preview" -> directPreview(x,pages,session,form);
+        case "/workflow/reconfirm" -> {
+          if(!"yes".equals(form.get("confirm")))throw new IllegalArgumentException("请明确确认已核对原内容");
+          Preview preview=workflow.previewReturned(session.actor,required(form,"recordId"),number(form.get("expectedVersion"),"正式版本"));
+          send(x,200,pages.preview(preview,"本次为退回任务的原值重新确认，不修改字段；最终确认后生成新一轮可追溯审批。"));
+        }
+        case "/workflow/returned/restore" -> {
+          Draft draft=workflow.restoreReturned(session.actor,required(form,"submissionId"),recordIds(required(form,"recordIds")),required(form,"requestId"));
+          HttpSupport.redirect(x,"/workflow/edit?dataset="+HttpSupport.url(draft.dataset())+"&draft="+HttpSupport.url(draft.id()));
+        }
         case "/workflow/confirm" -> {
           Submission result=workflow.confirm(session.actor,required(form,"previewId"),required(form,"requestId"));
           send(x,200,pages.submission(result,"提交已确认；请以当前单据状态为准。"));
@@ -191,7 +201,7 @@ final class WorkflowRoutes {
       long expected=number(form.get("version"+i),"记录版本");Map<String,String> values=new TreeMap<>();
       SnapshotRow saved=sparse?draft.rows().stream().filter(row->row.before().id().equals(id)).findFirst().orElseThrow(()->new IllegalArgumentException("记录不属于当前草稿")):null;
       for(DatasetSchema.Field field:schema.fields)if(field.editable()) {
-        if(sparse&&!saved.change().values().containsKey(field.key()))continue;
+        if(sparse&&!saved.change().values().isEmpty()&&!saved.change().values().containsKey(field.key()))continue;
         String key="value_"+i+"_"+field.key();if(!form.containsKey(key))throw new IllegalArgumentException("页面字段缺失，请刷新后重试");
         values.put(field.key(),form.get(key));
       }
@@ -215,8 +225,8 @@ final class WorkflowRoutes {
 
   private void verifyPrior(ActorContext actor,String prior,String dataset) {
     if(prior.isEmpty())return;Submission old=workflow.submission(actor,prior);
-    if(!old.ownerId().equals(actor.userId())||old.state()!=State.RETURNED||!old.dataset().equals(dataset)||!old.organizationId().equals(actor.organizationId()))
-      throw new IllegalArgumentException("只能关联本人同机构、同表格的已退回提交单");
+    if(!old.rowStages().containsValue(RowStage.RETURNED)||!old.dataset().equals(dataset)||!old.organizationId().equals(actor.organizationId()))
+      throw new IllegalArgumentException("只能关联本机构同表格的已退回业务行");
   }
 
   private String editableOrganization(ActorContext actor,String requested) {

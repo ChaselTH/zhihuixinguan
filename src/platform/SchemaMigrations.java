@@ -45,6 +45,7 @@ final class SchemaMigrations {
         for(String sql:scripts.get(index).split(";")) if(!sql.isBlank()) {
           execute(db,sql);checkpoint.accept("migration-"+version+"-step-"+(++step));
         }
+        if(version==9){LegacyWorkflowMigration.apply(db);checkpoint.accept("migration-9-history-mapped");}
         db.setAutoCommit(false);
         try(PreparedStatement st=db.prepareStatement("INSERT INTO schema_migrations VALUES(?,?,?)")) {
           st.setInt(1,version);st.setString(2,checksum);st.setString(3,Instant.now().toString());st.executeUpdate();

@@ -60,7 +60,7 @@ public final class MaintenancePlatform {
       }else{
         var rows=rows(a,month(t.preview.scope()));
         if(!PlatformStore.baseline(rows).equals(t.baseline))throw new ConcurrentModificationException("该月数据已导入、填写或删除，请重新预览；本次未删除");
-        if(pending(t.ids)>0)throw new ConcurrentModificationException("该月有待复核数据，请先批准或退回相关提交单，再重新预览删除");
+        if(pending(t.ids)>0)throw new ConcurrentModificationException("该月有待支行复核或待分行终审数据，请先处理相关提交单，再重新预览删除；本次整批未删除");
         for(var r:rows){
           exec("INSERT INTO record_deletions VALUES(?,?,?,?)",r.id(),a.userId(),clock.instant().toString(),token);
           store.workflowAudit(a,r.organizationId(),r.id(),"DATA_MONTH_DELETE",token,Codec.encode(r.values()),"","按月份 "+t.preview.scope()+" 删除正式数据；历史快照保留");
@@ -74,7 +74,7 @@ public final class MaintenancePlatform {
   private List<BusinessRecord> rows(ActorContext a,YearMonth m){return store.list(a,null,m.atDay(1),m.atEndOfMonth());}
   private int pending(List<String> ids)throws SQLException{
     Set<String> target=new HashSet<>(ids),submissions=new HashSet<>();
-    try(var st=statement("SELECT record_id,submission_id FROM pending_submission_records");var rs=st.executeQuery()){while(rs.next())if(target.contains(rs.getString(1)))submissions.add(rs.getString(2));}
+    try(var st=statement("SELECT record_id,submission_id FROM pending_submission_records UNION SELECT record_id,submission_id FROM workflow_record_state WHERE stage IN ('BRANCH_REVIEW','DIVISION_REVIEW')");var rs=st.executeQuery()){while(rs.next())if(target.contains(rs.getString(1)))submissions.add(rs.getString(2));}
     return submissions.size();
   }
   private void remember(Ticket t){tickets.values().removeIf(x->!clock.instant().isBefore(x.expires));if(tickets.size()>=50)throw new IllegalStateException("待确认删除过多，请稍后重试");tickets.put(t.preview.token(),t);}
