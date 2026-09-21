@@ -25,8 +25,8 @@ public final class BusinessVisualFixture {
       String path=x.getRequestURI().getPath();
       if(path.startsWith("/assets/")){String asset=path.substring(8);if(!Set.of("style.css","foundation.css","access.css","business.css","html5shiv.js").contains(asset)){HttpSupport.text(x,404,"Not found","text/plain");return;}HttpSupport.text(x,200,Files.readString(Path.of("web/assets").resolve(asset)),asset.endsWith("css")?"text/css":"application/javascript");return;}
       var query=new HashMap<>(HttpSupport.query(x.getRequestURI()));if(path.equals("/internal"))query.put("dataset","cross");
-      var data=new DashboardData(RangeSelection.from(query,months),months,List.of(),records);var pages=new RiskPages("0.3.0-b2.1 · 虚构只读预览",session);var filter=BusinessFilter.from(session.actor,query);
-      String html=switch(path){case "/"->pages.dashboard(data,states);case "/details"->pages.details(data,filter,1,states);case "/internal"->new InternalPages("0.3.0-b2.1 · 虚构只读预览",session).overview(data,filter,states);case "/branch"->pages.branch(data,filter.branch,states);default->pages.error(404,"虚构只读预览不执行真实填写、复核或导出");};
+      var data=new DashboardData(RangeSelection.from(query,months),months,List.of(),records);var pages=new RiskPages("FEEDBACK-009 · 虚构只读预览",session);var filter=BusinessFilter.from(session.actor,query);
+      String html=switch(path){case "/"->pages.dashboard(data,states);case "/details"->pages.details(data,filter,1,states);case "/internal"->new InternalPages("FEEDBACK-009 · 虚构只读预览",session).overview(data,filter,states);case "/branch"->pages.branch(data,filter.branch,states);default->pages.error(404,"虚构只读预览不执行真实填写、复核或导出");};
       HttpSupport.sendHtml(x,200,html);
     }catch(Exception e){HttpSupport.text(x,500,"Fixture error","text/plain");}finally{x.close();}});
     Runtime.getRuntime().addShutdownHook(new Thread(()->server.stop(0)));server.start();System.out.println("B2_SYNTHETIC_PREVIEW=http://127.0.0.1:"+server.getAddress().getPort());

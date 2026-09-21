@@ -15,7 +15,7 @@ public final class ImportVisualFixture {
     var period=xinguan.platform.Period.parse("20260901-20260915","");var old=new BusinessRecord("synthetic",1,"multi",period,"WUJIN",values,"虚构文件.xlsx","2026-09-16T00:00:00Z","",Map.of());
     var next=new ArrayList<>(values);next.set(17,"本次填报：已对相关事项进行核验，补充说明较长文字，检查单元格换行及不同屏幕宽度下的显示情况。".repeat(10));next.set(18,"否");
     var incoming=new BusinessRecord("",0,"multi",period,"WUJIN",next,"2026年9月虚构测试多重预警.xlsx","2026-09-16T00:00:00Z","",Map.of());
-    Job job=new Job("synthetic-import-job","multi","PREVIEW",1,"2026-09-16T00:00:00Z","2026-09-16T00:30:00Z",2,0,1,"");
+    Job job=new Job("synthetic-import-job","multi","2026-09","PREVIEW",1,"2026-09-16T00:00:00Z","2026-09-16T00:30:00Z",2,0,1,"");
     var pages=new ImportJobPages("0.3.0-a2.1 · 虚构页面",session);
     Map<String,String> html=Map.of("/",pages.preview(new Preview(job,List.of(new Item(1,new SourceRow(incoming,"多重预警清单",3),old,0,2,Choice.PRESERVE),new Item(2,new SourceRow(incoming,"多重预警清单",4),null,1,0,Choice.SKIP))),0),"/imports",new ImportPages("0.3.0-a2.1",session).imports(session,"",false),"/imports/jobs",pages.history(List.of(job),0),"/errors",pages.errors(List.of(new WorkbookImporter.Issue("虚构文件.xlsx","多重预警清单",3,"B","机构不在字典，请核对"),new WorkbookImporter.Issue("虚构文件.xlsx","多重预警清单",4,"W","时间顺序无法识别，请使用正确起止日期"))));
     HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);

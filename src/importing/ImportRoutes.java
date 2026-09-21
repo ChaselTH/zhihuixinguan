@@ -18,24 +18,26 @@ final class ImportRoutes extends HttpSupport {
       default -> throw new IllegalStateException();
     }return true;
   }
-  void upload(HttpExchange x,AuthService.Session s,String dataset)throws Exception{
-     boolean bundle="bundle".equals(dataset);if(!bundle)DatasetSchema.get(dataset);AccessPolicy.require(s.actor,AccessPolicy.Action.UPLOAD,Organizations.DIVISION);
+  void upload(HttpExchange x,AuthService.Session s)throws Exception{
+    AccessPolicy.require(s.actor,AccessPolicy.Action.UPLOAD,Organizations.DIVISION);
     String type=x.getRequestHeaders().getFirst("Content-Type");if(type==null||!type.toLowerCase(Locale.ROOT).startsWith("multipart/form-data"))throw new IllegalArgumentException("上传格式错误");String boundary=boundary(type);if(boundary.isBlank()||boundary.length()>200)throw new IllegalArgumentException("上传边界错误");
     Multipart form=parseMultipart(readLimited(x.getRequestBody(),50*1024*1024),boundary);if(!auth.csrf(s,form.fields.get("csrf")))throw new SecurityException("页面校验已失效");
-     if(form.files.isEmpty()||form.files.size()>10)throw new IllegalArgumentException("请选择 1～10 个完整工作簿");
-     if(bundle){List<ImportPlatform.SourceRow> bundleRows=new ArrayList<>();List<WorkbookImporter.Issue> bundleErrors=new ArrayList<>();int bundleSkipped=0;long bundleCharacters=0;for(Part file:form.files){if(file.data.length==0||file.data.length>20*1024*1024){bundleErrors.add(new WorkbookImporter.Issue(file.filename,"",0,"","文件不能为空，且单文件不能超过 20 MB"));continue;}var parsed=reader.inspectBundle(file.data,file.filename,"","");bundleErrors.addAll(parsed.errors());bundleSkipped+=parsed.skippedExamples();for(var source:parsed.sources())for(String value:source.record().values())bundleCharacters+=value.length();bundleRows.addAll(parsed.sources());if(bundleRows.size()>20000)throw new IllegalArgumentException("一批最多 20000 条，请分批上传");}if(bundleCharacters>8_000_000)throw new IllegalArgumentException("本批单元格文字合计超过 800 万字，请分批上传；本批全部未导入");if(!bundleErrors.isEmpty()){sendHtml(x,400,new ImportJobPages(version,s).errors(bundleErrors));return;}if(bundleRows.isEmpty()){adminRedirect(x,"格式校验通过，三张数据表未发现业务数据；跳过示例／说明 "+bundleSkipped+" 条。空模板未写入正式数据。",false);return;}var job=importing.stageBundle(s.actor,bundleRows,bundleSkipped);sendHtml(x,200,new ImportJobPages(version,s).preview(importing.preview(s.actor,job.id(),0,25),0));return;}
+    if(form.files.isEmpty()||form.files.size()>10)throw new IllegalArgumentException("请选择 1～10 个完整工作簿");
+    String month=form.fields.getOrDefault("month","").strip();
+    if(month.isEmpty()){String year=form.fields.getOrDefault("year","").strip(),number=form.fields.getOrDefault("monthNumber","").strip();if(!year.isEmpty()&&!number.isEmpty())month=year+"-"+String.format(Locale.ROOT,"%02d",Integer.parseInt(number));}
+    if(!month.matches("20\\d{2}-(0[1-9]|1[0-2])"))throw new IllegalArgumentException("请选择有效所属月份（YYYY-MM）");
     List<ImportPlatform.SourceRow> rows=new ArrayList<>();List<WorkbookImporter.Issue> errors=new ArrayList<>();int skipped=0;long characters=0;
     for(Part file:form.files){
       if(file.data.length==0||file.data.length>20*1024*1024){errors.add(new WorkbookImporter.Issue(file.filename,"",0,"","文件不能为空，且单文件不能超过 20 MB"));continue;}
-      var parsed=reader.inspect(file.data,file.filename,"","",dataset);errors.addAll(parsed.errors());
+      var parsed=reader.inspectAuto(file.data,file.filename,month);errors.addAll(parsed.errors());
       for(var source:parsed.sources())for(String value:source.record().values())characters+=value.length();
       if(characters>8_000_000)throw new IllegalArgumentException("本批单元格文字合计超过 800 万字，请分批上传；本批全部未导入");
       rows.addAll(parsed.sources());skipped+=parsed.skippedExamples();
       if(rows.size()>20000)throw new IllegalArgumentException("一批最多 20000 条，请分批上传");
     }
     if(!errors.isEmpty()){sendHtml(x,400,new ImportJobPages(version,s).errors(errors));return;}
-    if(rows.isEmpty()){adminRedirect(x,"格式校验通过，未发现业务数据；跳过示例／说明行 "+skipped+" 条。空模板未写入正式数据。",false);return;}
-    var job=importing.stage(s.actor,dataset,rows,skipped);sendHtml(x,200,new ImportJobPages(version,s).preview(importing.preview(s.actor,job.id(),0,25),0));
+    if(rows.isEmpty()){adminRedirect(x,"格式校验通过，所属月份 "+month+"；未发现业务数据。已跳过说明页、空白页及示例／说明内容 "+skipped+" 处。空模板未写入正式数据。",false);return;}
+    var job=importing.stageBundle(s.actor,rows,skipped,month);sendHtml(x,200,new ImportJobPages(version,s).preview(importing.preview(s.actor,job.id(),0,25),0));
   }
   boolean post(HttpExchange x,AuthService.Session s,Map<String,String> f)throws Exception{
     String path=x.getRequestURI().getPath();if(!Set.of("/imports/confirm","/imports/confirm-bulk","/imports/choices","/imports/cancel").contains(path))return false;

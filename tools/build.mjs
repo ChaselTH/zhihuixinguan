@@ -67,6 +67,9 @@ if(args.includes('--test')){
   run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'xinguan.platform.MaintenancePlatformTest']);
   run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'xinguan.platform.CompletionRulesTest']);
   run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'CompletionRuleViewTest']);
+  run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'xinguan.platform.Feedback009ReviewTest']);
+  run('java',['-Dfile.encoding=UTF-8','-cp',[tests,runtimeCp].join(path.delimiter),'Feedback009WorkbookReviewTest']);
+  run(process.execPath,[path.join(root,'tests','feedback009-upgrade.mjs'),[tests,runtimeCp].join(path.delimiter)]);
 }
 await fs.writeFile(path.join(build,'foundation-build.json'),JSON.stringify({version:(await fs.readFile(path.join(root,'VERSION'),'utf8')).trim(),sourceCommit,sourceDirty,app,jar,classpath:runtimeCp},null,2));
 console.log('BUILD_OK '+app);

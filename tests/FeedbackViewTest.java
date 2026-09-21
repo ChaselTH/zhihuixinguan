@@ -39,9 +39,12 @@ public class FeedbackViewTest {
       var draft=store.workflow().saveDraft(op,"",0,"multi",List.of(new RecordChange(row.id(),row.version(),Map.of("feedback","draft-only"))),"",UUID.randomUUID().toString());
       check(view(data,op).filtered("multi","","","overdue").size()==1,"draft not completed");
       store.workflow().confirm(div,store.workflow().previewDirect(div,"multi",List.of(new RecordChange(row.id(),row.version(),Map.of("feedback","正式反馈")))).id(),UUID.randomUUID().toString());
-      var complete=view(data,op);check(complete.filtered("multi","","","overdue").isEmpty(),"completed row no longer overdue");
-      check(pages.details(complete,new BusinessFilter("multi","","","all"),1,BusinessWorkflowState.empty()).contains("row-complete"),"completed stays green even after deadline");
-      check(service.export(op,Map.of("dataset","multi","scope","year","year","2026","completion","overdue")).count()==0,"completed excluded from overdue export");
+      var complete=view(data,op);check(complete.filtered("multi","","","overdue").isEmpty()&&complete.filtered("multi","","","complete").isEmpty(),"branch cannot see completed rows or overdue records");
+      check(!pages.details(complete,new BusinessFilter("multi","","","all"),1,BusinessWorkflowState.empty()).contains("DEADLINE-OWN-multi"),"completed row hidden from branch details after deadline");
+      check(service.export(op,Map.of("dataset","multi","scope","year","year","2026","completion","overdue")).count()==0&&service.export(op,Map.of("dataset","multi","scope","year","year","2026","completion","complete")).count()==0,"completed excluded from branch XLSX exports");
+      var divisionComplete=view(data,div);var divisionSession=new AuthService.Session("division-test","division-test",Instant.now().getEpochSecond(),store.sessionUser(div.userId()));divisionSession.safetyVersion=AccessPlatform.SAFETY_VERSION;
+      check(divisionComplete.filtered("multi","","","complete").size()==1&&new RiskPages("test",divisionSession).details(divisionComplete,BusinessFilter.from(div,Map.of("dataset","multi","completion","complete")),1,BusinessWorkflowState.empty()).contains("row-complete"),"division can see completed row green after deadline");
+      check(service.export(div,Map.of("dataset","multi","scope","year","year","2026","completion","complete")).count()==1,"division completed export reflects official values");
       store.deadlines().save(root,"multi",period,"2099-12-31",1);check(view(data,root).filtered("multi","","","overdue").isEmpty(),"extension removes overdue on other unfinished branch");
       store.deadlines().save(root,"multi",period,"",2);check(view(data,root).records.stream().filter(r->r.dataset.equals("multi")&&r.period.equals(period)).allMatch(r->r.feedbackDeadline==null),"clearing removes countdown without business edits");
     }
@@ -51,7 +54,7 @@ public class FeedbackViewTest {
     Instant now=Instant.parse("2026-09-14T02:00:00Z");
     public ZoneId getZone(){return ZoneOffset.UTC;}public Clock withZone(ZoneId zone){return this;}public Instant instant(){return now;}
   }
-  static DashboardData view(DataStore data,ActorContext actor){var months=data.months(actor);var range=RangeSelection.from(Map.of("scope","year","year","2026"),months);return new DashboardData(range,months,List.of(),data.readRange(range,actor));}
+  static DashboardData view(DataStore data,ActorContext actor){var months=data.months(actor);var range=RangeSelection.from(Map.of("scope","year","year","2026"),months);return new DashboardData(range,months,List.of(),data.readRange(range,actor),data.platform.completionRules().visible(actor),actor);}
   static ActorContext user(PlatformStore store,ActorContext root,String number,Role role,String org){var u=store.createUser(root,number,"虚构日期测试",role,org);store.changeOwnPassword(u.user().actor(),"synthetic-"+number);return store.sessionUser(u.user().id()).actor();}
   static void check(boolean v,String label){assertions++;if(!v)throw new AssertionError(label);}
 }

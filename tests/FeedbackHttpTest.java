@@ -13,7 +13,7 @@ final class FeedbackHttpTest {
     var uploaded=ImportHttpTest.upload(List.of(HttpSmokeTest.workbook("multi","WUJIN","FEEDBACK-HTTP")),List.of("deadline-fixture.xlsx"),csrf());
     String token=HttpSmokeTest.hidden(uploaded.body()).get("token");
     check(post("/imports/confirm-bulk",Map.of("csrf",csrf(),"token",token,"revision","1","mode","preserve","confirmed","yes")).statusCode()==303,"synthetic record created");
-    String period="2026-09-01~2026-09-15";
+    String period="2026-09";
     var fields=new HashMap<>(Map.of("dataset","multi","period",period,"revision","0","dueDate",LocalDate.now(FeedbackTiming.ZONE).plusDays(1).toString(),"action","save","scope","month","month","2026-09"));
     for(var client:List.of(branch,operator,reviewer)){
       use(client);check(get("/deadlines?month=2026-09").statusCode()==200&&!get("/deadlines?month=2026-09").body().contains("/deadlines/save"),"branch reads own deadlines without editing");

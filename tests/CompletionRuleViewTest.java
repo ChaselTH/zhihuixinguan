@@ -17,10 +17,10 @@ public class CompletionRuleViewTest {
         String feedback=schema.id.equals("cross")?"cross_feedback":"feedback",choice=schema.id.equals("negative")?"repayment_impact":"default_risk";
         for(String org:List.of("WUJIN","JINTAN")){
           var r=FoundationTest.candidate(schema.id,org,"REQUIRED-"+org+schema.id);var values=new ArrayList<>(r.values());values.set(schema.index(feedback),"正式已填反馈");
-          s.importRows(div,schema.id,List.of(new BusinessRecord("",0,schema.id,r.period(),org,values,"synthetic.xlsx",Instant.now().toString(),"",Map.of())),false,id());
+          var legacy=new BusinessRecord("",0,schema.id,r.period(),org,values,"synthetic.xlsx",Instant.now().toString(),"",Map.of());s.migrateLegacy(List.of(new PlatformStore.LegacyItem("completion-view/"+schema.id+"/"+org,legacy,Codec.hash(schema.id+org))));
         }
         var row=s.list(op,schema.id,null,null).get(0);s.deadlines().save(div,schema.id,row.period().key(),"2026-09-15",0);
-        check(FeedbackViewTest.view(data,op).filtered(schema.id,"","","complete").size()==1,"before rules legacy completion remains");
+        check(FeedbackViewTest.view(data,op).filtered(schema.id,"","","complete").isEmpty()&&FeedbackViewTest.view(data,div).filtered(schema.id,"","","complete").size()==2,"before rules legacy completion remains visible only to division");
         s.completionRules().save(div,schema.id,Set.of(feedback,choice),0);
       }
       clock.now=Instant.parse("2026-09-17T02:00:00Z");var incomplete=FeedbackViewTest.view(data,op);
@@ -38,8 +38,10 @@ public class CompletionRuleViewTest {
         s.workflow().saveDraft(op,"",0,schema.id,List.of(new RecordChange(row.id(),row.version(),Map.of(field,"否"))),"",id());
         check(FeedbackViewTest.view(data,op).filtered(schema.id,"","","complete").isEmpty(),"private draft cannot satisfy official required fields");
         s.workflow().confirm(div,s.workflow().previewDirect(div,schema.id,List.of(new RecordChange(row.id(),row.version(),Map.of(field,"否")))).id(),id());
-        var complete=FeedbackViewTest.view(data,op);check(complete.filtered(schema.id,"","","complete").size()==1&&complete.filtered(schema.id,"","","overdue").isEmpty(),"all required formal values complete and remove overdue");
-        check(exports.export(op,Map.of("dataset",schema.id,"scope","year","year","2026","completion","complete")).count()==1,"completed export updates without reimport");
+        var complete=FeedbackViewTest.view(data,op);check(complete.filtered(schema.id,"","","complete").isEmpty()&&complete.filtered(schema.id,"","","overdue").isEmpty(),"branch cannot see completed rows or overdue records");
+        check(exports.export(op,Map.of("dataset",schema.id,"scope","year","year","2026","completion","complete")).count()==0,"completed export remains hidden from branch roles");
+        var divisionComplete=FeedbackViewTest.view(data,div);check(divisionComplete.filtered(schema.id,"","","complete").size()==1,"division sees completed row after direct final approval");
+        check(exports.export(div,Map.of("dataset",schema.id,"scope","year","year","2026","completion","complete")).count()==1,"completed export updates without reimport for division");
         s.completionRules().save(div,schema.id,Set.of(),1);
       }
       var all=FeedbackViewTest.view(data,root);check(all.completedCount()==6&&all.branches.get("金坛").completed==3,"clearing required rules recalculates historical rows in all branches");

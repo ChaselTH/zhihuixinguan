@@ -17,28 +17,22 @@ final class BusinessWorkflowState {
     synchronized(store){
       Map<String,RowRef> selected=new LinkedHashMap<>();Set<String> datasets=new LinkedHashSet<>();
       for(RowRef row:shown){store.find(actor,row.record.id);selected.put(row.record.id,row);datasets.add(row.record.dataset);}
-      var service=store.workflow();Map<String,Submission> pending=new HashMap<>();Map<String,Draft> drafts=new HashMap<>();Map<String,Boolean> stale=new HashMap<>();Set<String> consumedDrafts=new HashSet<>();
+      var service=store.workflow();Map<String,Submission> pending=new HashMap<>();Map<String,Draft> drafts=new HashMap<>();Map<String,Boolean> stale=new HashMap<>();
       for(String dataset:datasets){
         for(int offset=0;;offset+=100){
-          var page=service.submissions(actor,new Query(dataset,null,State.SUBMITTED,null,null,false,offset,100));
-          for(var submission:page)for(var item:submission.rows())if(selected.containsKey(item.before().id())){
+          var page=service.submissions(actor,new Query(dataset,null,null,null,null,false,offset,100));
+          for(var submission:page)for(var item:submission.rows())if(selected.containsKey(item.before().id())&&Set.of(RowStage.BRANCH_REVIEW,RowStage.DIVISION_REVIEW).contains(submission.rowStages().get(item.before().id()))){
             var existing=pending.get(item.before().id());
             if(existing==null||(!existing.ownerId().equals(actor.userId())&&submission.ownerId().equals(actor.userId())))pending.put(item.before().id(),submission);
           }
           if(page.size()<100)break;
         }
-        // An approved draft version stays consumed even if formal data is subsequently changed.
-        if(actor.role()==Role.OPERATOR)for(int offset=0;;offset+=100){
-          var page=service.submissions(actor,new Query(dataset,null,null,null,null,true,offset,100));
-          for(var submission:page)if(submission.state()!=State.RETURNED)consumedDrafts.add(submission.draftId()+":"+submission.draftVersion());
-          if(page.size()<100)break;
-        }
         if(actor.role()==Role.OPERATOR)for(int offset=0;;offset+=100){
           var page=service.drafts(actor,dataset,offset,100);
-          for(var draft:page)if(!consumedDrafts.contains(draft.id()+":"+draft.version()))for(var item:draft.rows()){
+          for(var draft:page)for(var item:draft.rows()){
             var row=selected.get(item.before().id());if(row==null)continue;
             var schema=DatasetSchema.get(dataset);boolean different=item.change().values().entrySet().stream().anyMatch(e->!row.values.get(schema.index(e.getKey())).equals(e.getValue()));
-            if(different&&drafts.putIfAbsent(row.record.id,draft)==null)stale.put(row.record.id,item.change().expectedVersion()!=row.record.versions.get(row.rowIndex));
+            if((different||row.record.workflowStage==RowStage.RETURNED)&&drafts.putIfAbsent(row.record.id,draft)==null)stale.put(row.record.id,item.change().expectedVersion()!=row.record.versions.get(row.rowIndex));
           }
           if(page.size()<100)break;
         }

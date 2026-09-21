@@ -55,7 +55,7 @@ public final class FoundationTest {
         Path filled=work.resolve(s.id+"-filled.xlsx");try(OutputStream out=Files.newOutputStream(filled)){wb.write(out);}
         List<BusinessRecord> result=importer.read(filled,filled.getFileName().toString(),"2026-09","",s.id).rows();check(result.size()==1,"filled template roundtrip");check(!result.get(0).complete(),"source-only template remains incomplete");
         String wrong=s.id.equals("multi")?"negative":"multi";expect(WorkbookImportException.class,()->importer.read(filled,"file.xlsx","2026-09","",wrong));
-        if(s.id.equals("cross"))check(importer.read(filled,"no-date.xlsx","","",s.id).rows().get(0).period().key().equals("2026-09"),"cross month comes from first default date");
+        if(s.id.equals("cross"))check(importer.read(filled,"no-date.xlsx","2026-09","",s.id).rows().get(0).period().key().equals("2026-09"),"cross month comes from the explicitly selected archive month");
         for(int c=0;c<s.width();c++)check(sheet.getRow(0).getCell(c).getCellStyle().getFillForegroundColor()==(s.editable(c)?IndexedColors.YELLOW.getIndex():IndexedColors.GREY_25_PERCENT.getIndex()),"template fill consistent");
       }
       if(userTemplate!=null)check(importer.read(userTemplate,userTemplate.getFileName().toString(),"2026-09","",s.id).rows().isEmpty(),"real user template has no imported examples");
@@ -67,6 +67,7 @@ public final class FoundationTest {
   static void repository(Path dir)throws Exception {
     String keptId;
     try(PlatformStore store=new PlatformStore(dir)){
+      store.bootstrapSuperAdmin("880000001","foundation-bootstrap-only");var root=store.authenticateUser("880000001","foundation-bootstrap-only").actor();var created=store.createUser(root,"880000002","虚构分行管理员",Role.DIVISION_ADMIN,"CZ");store.changeOwnPassword(created.user().actor(),"foundation-division-password");ActorContext division=store.sessionUser(created.user().id()).actor();var reviewerCreated=store.createUser(root,"880000003","虚构武进复核员",Role.REVIEWER,"WUJIN");store.changeOwnPassword(reviewerCreated.user().actor(),"foundation-reviewer-password");ActorContext reviewer=store.sessionUser(reviewerCreated.user().id()).actor();
       BusinessRecord a=candidate("multi","WUJIN","A"),b=candidate("multi","JINTAN","B");
       var first=store.importRows(DIV,"multi",List.of(a,b),false,"initial-import-0001");check(first.added()==2,"two imports");
       check(store.importRows(DIV,"multi",List.of(a,b),false,"initial-import-0001").batchId().equals(first.batchId()),"idempotent import");
@@ -77,21 +78,22 @@ public final class FoundationTest {
       String previewBaseline=PlatformStore.baseline(store.list(DIV,"multi",null,null));
       expect(SecurityException.class,()->store.publishDirect(OP,List.of(edit),"operator-write-0001"));
       expect(SecurityException.class,()->store.publishDirect(SUPER,List.of(edit),"super-write-0001"));
-      store.publishDirect(BRANCH,List.of(edit),"branch-write-0001");check(store.find(OP,keptId).complete(),"single feedback completes");
+      expect(SecurityException.class,()->store.publishDirect(BRANCH,List.of(edit),"branch-write-0001"));
+      var preview=store.workflow().previewDirect(division,"multi",List.of(edit));store.workflow().confirm(division,preview.id(),"division-write-0001");check(store.find(OP,keptId).complete(),"single feedback completes only through confirmed workflow");
       check(store.find(OP,keptId).version()==2,"revision advanced");
       expect(ConcurrentModificationException.class,()->store.importRows(DIV,"multi",List.of(a),true,"stale-preview-0001",previewBaseline));
       check(store.find(OP,keptId).values().get(17).equals("已核实测试内容"),"stale preview cannot overwrite newer feedback");
-      store.publishDirect(BRANCH,List.of(edit),"branch-write-0001");check(store.find(OP,keptId).version()==2,"idempotent save despite stale base");
-      expect(ConcurrentModificationException.class,()->store.publishDirect(BRANCH,List.of(edit),"stale-write-0001"));
-      expect(IllegalArgumentException.class,()->store.publishDirect(BRANCH,List.of(new RecordChange(keptId,2,Map.of("customer_name","tamper"))),"readonly-field-0001"));
+      check(store.workflow().confirm(division,preview.id(),"division-write-0001").id()!=null&&store.find(OP,keptId).version()==2,"workflow confirmation retry is idempotent");
+      expect(SecurityException.class,()->store.publishDirect(BRANCH,List.of(edit),"stale-write-0001"));
+      try{store.workflow().previewDirect(division,"multi",List.of(new RecordChange(keptId,2,Map.of("customer_name","tamper"))));throw new AssertionError("non-yellow import bypass accepted");}catch(WorkflowContracts.WorkflowException e){check(e.code()==WorkflowContracts.Code.INVALID_INPUT,"workflow rejects non-yellow write at its boundary");}
       int audits=store.diagnostics().get("audit_events");
-      expect(ConcurrentModificationException.class,()->store.publishDirect(DIV,List.of(new RecordChange(officialA.id(),2,Map.of("feedback","must rollback")),new RecordChange(officialB.id(),999,Map.of("feedback","stale"))),"atomic-rollback-0001"));
+      try{store.workflow().previewDirect(division,"multi",List.of(new RecordChange(officialA.id(),2,Map.of("feedback","must rollback")),new RecordChange(officialB.id(),999,Map.of("feedback","stale"))));throw new AssertionError("stale batch accepted");}catch(WorkflowContracts.WorkflowException e){check(e.code()==WorkflowContracts.Code.VERSION_CONFLICT,"stale preview conflict returned");}
       check(store.find(OP,keptId).values().get(17).equals("已核实测试内容"),"whole batch rolled back");check(store.diagnostics().get("audit_events")==audits,"audit rollback");
       check(store.auditEvents(OP,100).stream().allMatch(e->e.organization().equals("WUJIN")),"audit scope");
       store.importRows(DIV,"multi",List.of(b,a),false,"reordered-import-0001");check(store.find(OP,keptId).id().equals(keptId),"stable id after source reordering");
       check(store.find(OP,keptId).values().get(17).equals("已核实测试内容"),"blank reimport preserves fills");
       expect(SecurityException.class,()->store.importRows(SUPER,"multi",List.of(a),false,"super-import-0001"));
-      store.importRows(DIV,"multi",List.of(a),true,"overwrite-clear-0001");check(!store.find(OP,keptId).complete(),"explicit blank overwrite clears completion");
+      store.importRows(DIV,"multi",List.of(a),true,"overwrite-clear-0001");check(store.find(OP,keptId).complete(),"import overwrite does not change formal data before approval");var imported=store.workflow().pendingReviews(reviewer,WorkflowContracts.Query.firstPage()).stream().filter(s->s.rows().stream().anyMatch(row->row.before().id().equals(keptId))).findFirst().orElseThrow();store.workflow().approve(reviewer,imported.id(),UUID.randomUUID().toString());store.workflow().approve(division,imported.id(),UUID.randomUUID().toString());check(!store.find(OP,keptId).complete(),"explicit blank overwrite clears completion after approval");
       int count=store.list(DIV,null,null,null).size();BusinessRecord invalid=new BusinessRecord("",0,"multi",a.period(),"INVALID",a.values(),a.filename(),a.importedAt(),"",Map.of());
       expect(IllegalArgumentException.class,()->store.importRows(DIV,"multi",List.of(candidate("multi","WUJIN","C"),invalid),false,"bad-batch-rollback-0001"));check(store.list(DIV,null,null,null).size()==count,"import batch rolls back");
       var longPeriod=xinguan.platform.Period.parse("20260101-20260331","");List<String> v=new ArrayList<>(a.values());v.set(0,"quarter");v.set(22,longPeriod.key());

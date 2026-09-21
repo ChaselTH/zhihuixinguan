@@ -157,7 +157,7 @@ public final class AccessPlatform {
       List<Object> args=new ArrayList<>();
       if(!submissionId.isEmpty()){sql+=" AND w.submission_id=?";args.add(submissionId);}
       String types="(e.action LIKE 'USER_%' OR e.action LIKE 'PASSWORD_%' OR e.action LIKE 'ACCESS_%' OR e.action LIKE 'SECURITY_%' OR e.action LIKE 'NOTICE_%' OR e.action='AUDIT_PURGE')";
-      sql+=" AND e.action<>'DRAFT_SAVE'";if(!category.equals("all"))sql+=" AND "+(security?types:"NOT "+types);
+      sql+=" AND e.action NOT IN ('DRAFT_SAVE','DRAFT_RESTORE_RETURNED')";if(!category.equals("all"))sql+=" AND "+(security?types:"NOT "+types);
       if(a.role()!=Role.SUPER_ADMIN)sql+=" AND e.actor_role<>'SUPER_ADMIN'";
       if(!AccessPolicy.all(a)){sql+=" AND e.organization_id=?";args.add(a.organizationId());}
       if(!blank(filter.organization()).isEmpty()){organization(filter.organization());AccessPolicy.require(a,AccessPolicy.Action.VIEW,filter.organization());sql+=" AND e.organization_id=?";args.add(filter.organization());}

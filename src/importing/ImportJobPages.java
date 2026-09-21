@@ -5,9 +5,9 @@ import static xinguan.platform.ImportPlatform.*;
 final class ImportJobPages extends PageLayout {
   ImportJobPages(String version,AuthService.Session session){super(version,session);}
   String history(List<Job> jobs,int offset){
-    StringBuilder b=new StringBuilder("<h1>我的导入任务</h1><p>只显示本人任务。待确认内容保存 30 分钟，重新登录或重启服务后可继续；过期需重新上传。正式导入结果长期保留。</p><p><a class=\"btn btn-primary\" href=\"/imports\">上传新批次</a></p><div class=\"table-scroll\"><table class=\"data-table\"><thead><tr><th>创建时间</th><th>表种</th><th>记录数</th><th>状态</th><th>操作</th></tr></thead><tbody>");
-    for(Job j:jobs)b.append("<tr><td>").append(e(time(j.createdAt()))).append("</td><td>").append(e(label(j.dataset()))).append("</td><td>").append(j.count()).append("</td><td>").append(state(j.state())).append("</td><td><a href=\"/imports/preview?token=").append(u(j.id())).append("\">查看任务</a></td></tr>");
-    if(jobs.isEmpty())b.append("<tr><td colspan=\"5\">暂无导入任务</td></tr>");
+    StringBuilder b=new StringBuilder("<h1>我的导入任务</h1><p>只显示本人任务。待确认内容保存 30 分钟，重新登录或重启服务后可继续；过期需重新上传。正式导入结果长期保留。</p><p><a class=\"btn btn-primary\" href=\"/imports\">上传新批次</a></p><div class=\"table-scroll\"><table class=\"data-table\"><thead><tr><th>创建时间</th><th>所属月份</th><th>识别清单</th><th>记录数</th><th>状态</th><th>操作</th></tr></thead><tbody>");
+    for(Job j:jobs)b.append("<tr><td>").append(e(time(j.createdAt()))).append("</td><td>").append(e(j.selectedMonth().isBlank()?"需重新上传选月":j.selectedMonth())).append("</td><td>").append(e(label(j.dataset()))).append("</td><td>").append(j.count()).append("</td><td>").append(state(j.state())).append("</td><td><a href=\"/imports/preview?token=").append(u(j.id())).append("\">查看任务</a></td></tr>");
+    if(jobs.isEmpty())b.append("<tr><td colspan=\"6\">暂无导入任务</td></tr>");
     return shell("导入任务",b.append("</tbody></table></div>").append(AccessPages.pager("/imports/jobs?",offset,jobs.size())).toString());
   }
   String preview(Preview p,int offset){return preview(p,offset,false);}
@@ -33,10 +33,10 @@ final class ImportJobPages extends PageLayout {
     return shell("导入预览",b.toString());
   }
   private String summary(Preview p){
-    Summary s=p.summary();StringBuilder b=new StringBuilder("<div class=\"import-summary\"><strong>本批数据对比</strong><p>上传有效记录 ").append(p.job().count()).append(" 条：新增 ").append(s.newCount()).append(" 条，重复 ").append(s.formalDuplicates()).append(" 条（其中填写不同 ").append(s.fillConflicts()).append(" 条）。</p><p>");
+    Summary s=p.summary();StringBuilder b=new StringBuilder("<div class=\"import-summary\"><strong>本批数据对比</strong><p>冻结所属月份：").append(e(p.job().selectedMonth().isBlank()?"未选择（旧任务不能确认，请重新上传）":p.job().selectedMonth())).append("</p><p>上传有效记录 ").append(p.job().count()).append(" 条：新增 ").append(s.newCount()).append(" 条，重复 ").append(s.formalDuplicates()).append(" 条（其中填写不同 ").append(s.fillConflicts()).append(" 条）。</p><p>");
     for(var entry:s.datasetCounts().entrySet())b.append(e(label(entry.getKey()))).append(" ").append(entry.getValue()).append(" 条　");
-    b.append("</p><p>数据期次：").append(e(String.join("、",s.periods()))).append("</p><p>保留模式预计更新 ").append(s.preserveUpdated()).append(" 条；覆盖模式预计更新 ").append(s.overwriteUpdated()).append(" 条。更新数量不含新增。</p>");
-    if(p.job().repeated()>0)b.append("<p>本批完全相同记录已合并 ").append(p.job().repeated()).append(" 条。</p>");
+    b.append("</p><p>文件 ").append(s.fileCount()).append(" 个；工作表：");for(var entry:s.sheetCounts().entrySet())b.append(e(entry.getKey())).append("（").append(entry.getValue()).append(" 条） ");
+    b.append("</p><p>所属月份记录键：").append(e(String.join("、",s.periods()))).append("</p><p>跳过空白／说明／示例 ").append(p.job().examples()).append(" 处；本批重复源行合并 ").append(p.job().repeated()).append(" 条。</p><p>保留模式预计更新 ").append(s.preserveUpdated()).append(" 条；覆盖模式预计更新 ").append(s.overwriteUpdated()).append(" 条；无变化 ").append(Math.max(0,s.formalDuplicates()-s.preserveUpdated())).append(" 条。更新数量不含新增。</p>");
     if(s.similarCandidates()>0)b.append("<p>有 ").append(s.similarCandidates()).append(" 条同客户同期但来源不同的候选，按独立记录保留。</p>");
     return b.append("</div>").toString();
   }

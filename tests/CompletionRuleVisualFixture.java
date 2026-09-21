@@ -13,7 +13,7 @@ public class CompletionRuleVisualFixture {
     var div=FeedbackViewTest.user(store,root,"907000002",Role.DIVISION_ADMIN,"CZ");
     for(var schema:DatasetSchema.all()){
       var row=FoundationTest.candidate(schema.id,"WUJIN","必填功能虚构测试企业");var values=new ArrayList<>(row.values());values.set(schema.index(schema.id.equals("cross")?"cross_feedback":"feedback"),"已核查经营情况，尚待补充其他反馈。");
-      store.importRows(div,schema.id,List.of(new BusinessRecord("",0,schema.id,row.period(),row.organizationId(),values,"synthetic.xlsx",Instant.now().toString(),"",Map.of())),false,UUID.randomUUID().toString());
+      var legacy=new BusinessRecord("",0,schema.id,row.period(),row.organizationId(),values,"synthetic.xlsx",Instant.now().toString(),"",Map.of());store.migrateLegacy(List.of(new PlatformStore.LegacyItem("completion-visual/"+schema.id,legacy,Codec.hash(schema.id))));
     }
     var session=new AuthService.Session("fixture","fixture-csrf",Instant.now().getEpochSecond(),store.sessionUser(div.userId()));session.safetyVersion=AccessPlatform.SAFETY_VERSION;
     HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);

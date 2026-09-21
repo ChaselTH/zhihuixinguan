@@ -34,7 +34,7 @@ final class ExcelExporter {
     try(Workbook wb=new XSSFWorkbook()){
       for(DatasetSchema schema:DatasetSchema.all())createDataSheet(wb,schema,List.of());
       Sheet guide=wb.createSheet("模板说明");CellStyle normal=wb.createCellStyle();normal.setWrapText(true);normal.setVerticalAlignment(VerticalAlignment.TOP);CellStyle header=wb.createCellStyle();header.cloneStyleFrom(normal);header.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());header.setFillPattern(FillPatternType.SOLID_FOREGROUND);Font font=wb.createFont();font.setBold(true);header.setFont(font);
-      String[] notes={"智慧信管三表统一模板 v1（2026-09 表头）","本工作簿包含负面闭环清单、多重预警清单、交叉违约清单三个数据工作表；请勿改动表头、列顺序及合并单元格。","黄色列是支行填报列；按网页当前必填设置判定完成，未设置必填列时任意黄色格非空即完成，必填项为空仍可提交；客户编码必须按文本保存以保留前导零。","上传时只选择这一个工作簿，在统一入口一次解析、预览和确认；任一工作表错误则三表整批不生效。","机构：武进、金坛、溧阳、新区、经开、天宁、钟楼、营业部、中吴。多重预警、负面闭环按每行“时间顺序”分期（有效月份或起止日期）；交叉违约按“违约首次出现时间”分月。三类时间均必填，不从文件名推算。","下拉字段只允许模板选项；公式必须带有已保存的缓存值。此说明页不会作为业务数据导入。"};
+      String[] notes=templateNotes("bundle");
       guide.setColumnWidth(0,110*256);guide.setDisplayGridlines(false);for(int i=0;i<notes.length;i++){Row row=guide.createRow(i);row.setHeightInPoints(i==0?28:46);Cell cell=row.createCell(0);cell.setCellValue(notes[i]);cell.setCellStyle(i==0?header:normal);}
       ByteArrayOutputStream out=new ByteArrayOutputStream();wb.write(out);return out.toByteArray();
     }
@@ -73,11 +73,19 @@ final class ExcelExporter {
         DataValidationHelper helper=sheet.getDataValidationHelper();DataValidation validation=helper.createValidation(helper.createExplicitListConstraint(schema.fields.get(c).options().toArray(new String[0])),new CellRangeAddressList(schema.headerRows,Math.max(max,1000),c,c));validation.setShowErrorBox(true);sheet.addValidationData(validation);
       }
       if(template){
-        Sheet guide=wb.createSheet("模板说明");String[] notes={schema.label+" · 模板 v1（2026-09 表头）","请勿改动数据工作表表头、列顺序及合并单元格。黄色列是支行填报列；按网页当前必填设置判定完成，未设置必填列时任意黄色格非空即完成，必填项为空仍可提交。","客户编码必须按文本保存，保留前导零。请勿将长编码存为数值后再转文本。","机构：武进、金坛、溧阳、新区、经开、天宁、钟楼、营业部、中吴。",schema.periodColumn<0?"按违约首次出现时间所属月份归档，例如 2026-09-17；不使用文件名月份。":"按表内每行的时间顺序分期，该列必填，例如 2026-09 或 20260901-20260915；不从文件名或上传参数推算。","下拉字段只允许模板选项。日期期次示例：20260901-20260915。","一次可上传 1～10 个同格式文件；单文件 20 MB、整批 50 MB／20000 条。任何文件错误则整批不导入。","同一来源重复时默认保留已有非空填写、仅补空白。选择覆盖会把上传空白也覆盖为清空。","工作表公式使用已保存的缓存值，不联网计算；有错误或无有效缓存时先重算并保存。","本页是说明，不会作为业务数据导入。"};
+        Sheet guide=wb.createSheet("模板说明");String[] notes=templateNotes(schema.id);
         guide.setColumnWidth(0,100*256);guide.setDisplayGridlines(false);for(int i=0;i<notes.length;i++){Row row=guide.createRow(i);row.setHeightInPoints(i==0?28:42);Cell cell=row.createCell(0);cell.setCellValue(notes[i]);cell.setCellStyle(i==0?header:normal);}
       }
       ByteArrayOutputStream out=new ByteArrayOutputStream();wb.write(out);return out.toByteArray();
     }
+  }
+  static String[] templateNotes(String dataset){
+    if(dataset.equals("bundle"))return new String[]{"智慧信管三表统一模板 v1（2026-09 表头）","本工作簿包含负面闭环清单、多重预警清单、交叉违约清单三个数据工作表；请勿改动表头、列顺序及合并单元格。","黄色列是支行填报列；按网页当前必填设置判定完成，未设置必填列时任意黄色格非空即完成，必填项为空仍可提交；客户编码必须按文本保存以保留前导零。","统一入口支持单表、多工作表或多个文件，按上传时选择的所属月份归档；任一工作表错误则整批不生效。","机构：武进、金坛、溧阳、新区、经开、天宁、钟楼、营业部、中吴。三类清单按上传所选月份归档；原时间顺序、违约首次出现时间作为来源字段保留。","下拉字段只允许模板选项；公式必须带有已保存的缓存值。此说明页不会作为业务数据导入。"};
+    DatasetSchema schema=DatasetSchema.get(dataset);return new String[]{schema.label+" · 模板 v1（2026-09 表头）","请勿改动数据工作表表头、列顺序及合并单元格。黄色列是支行填报列；按网页当前必填设置判定完成，未设置必填列时任意黄色格非空即完成，必填项为空仍可提交。","客户编码必须按文本保存，保留前导零。请勿将长编码存为数值后再转文本。","机构：武进、金坛、溧阳、新区、经开、天宁、钟楼、营业部、中吴。","按上传时选择的所属月份归档；时间顺序、违约首次出现时间仅作为来源字段保留，不从文件名推算。","下拉字段只允许模板选项。日期期次示例：20260901-20260915。","一次可上传 1～10 个同格式文件；单文件 20 MB、整批 50 MB／20000 条。任何文件错误则整批不导入。","同一来源重复时默认保留已有非空填写、仅补空白。选择覆盖会把上传空白也覆盖为清空。","工作表公式使用已保存的缓存值，不联网计算；有错误或无有效缓存时先重算并保存。","本页是说明，不会作为业务数据导入。"};
+  }
+  static String[] legacyTemplateNotes(String dataset){
+    if(dataset.equals("bundle"))return new String[]{"智慧信管三表统一模板 v1（2026-09 表头）","本工作簿包含负面闭环清单、多重预警清单、交叉违约清单三个数据工作表；请勿改动表头、列顺序及合并单元格。","黄色列是支行填报列；按网页当前必填设置判定完成，未设置必填列时任意黄色格非空即完成，必填项为空仍可提交；客户编码必须按文本保存以保留前导零。","上传时只选择这一个工作簿，在统一入口一次解析、预览和确认；任一工作表错误则三表整批不生效。","机构：武进、金坛、溧阳、新区、经开、天宁、钟楼、营业部、中吴。多重预警、负面闭环按每行“时间顺序”分期（有效月份或起止日期）；交叉违约按“违约首次出现时间”分月。三类时间均必填，不从文件名推算。","下拉字段只允许模板选项；公式必须带有已保存的缓存值。此说明页不会作为业务数据导入。"};
+    DatasetSchema schema=DatasetSchema.get(dataset);return new String[]{schema.label+" · 模板 v1（2026-09 表头）","请勿改动数据工作表表头、列顺序及合并单元格。黄色列是支行填报列；按网页当前必填设置判定完成，未设置必填列时任意黄色格非空即完成，必填项为空仍可提交。","客户编码必须按文本保存，保留前导零。请勿将长编码存为数值后再转文本。","机构：武进、金坛、溧阳、新区、经开、天宁、钟楼、营业部、中吴。",schema.periodColumn<0?"按违约首次出现时间所属月份归档，例如 2026-09-17；不使用文件名月份。":"按表内每行的时间顺序分期，该列必填，例如 2026-09 或 20260901-20260915；不从文件名或上传参数推算。","下拉字段只允许模板选项。日期期次示例：20260901-20260915。","一次可上传 1～10 个同格式文件；单文件 20 MB、整批 50 MB／20000 条。任何文件错误则整批不导入。","同一来源重复时默认保留已有非空填写、仅补空白。选择覆盖会把上传空白也覆盖为清空。","工作表公式使用已保存的缓存值，不联网计算；有错误或无有效缓存时先重算并保存。","本页是说明，不会作为业务数据导入。"};
   }
   private static void group(Sheet s,int from,int to,String label){s.getRow(0).getCell(from).setCellValue(label);s.addMergedRegion(new CellRangeAddress(0,0,from,to));}
 }

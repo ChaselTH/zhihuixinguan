@@ -74,7 +74,7 @@ public final class WorkflowRoutesTest {
     String previewId=hidden(previewPage.body(),"previewId");check(!previewId.isEmpty()&&previewPage.body().contains("name=\"csrf\"")&&previewPage.body().contains("name=\"requestId\""),"preview confirmation contains csrf, preview id and stable request id");
     Exchange restoredPreview=get(operatorSession,"/workflow/preview?id="+previewId);check(hidden(previewPage.body(),"requestId").equals(hidden(restoredPreview.body(),"requestId")),"restoring the same preview preserves confirmation request id");
     String confirmRequest=id();Exchange submittedPage=post(operatorSession,"/workflow/confirm",Map.of("previewId",previewId,"requestId",confirmRequest,"csrf",operatorSession.csrf));
-    check(submittedPage.status==200&&submittedPage.body().contains("待复核"),"operator confirmation creates pending immutable submission");
+    check(submittedPage.status==200&&submittedPage.body().contains("待支行复核"),"operator confirmation creates pending immutable submission");
     Submission submission=store.workflow().submissions(operator.actor(),new Query(null,null,null,null,null,true,0,20)).get(0);
     check(store.find(operator.actor(),first.id()).values().get(DatasetSchema.get("multi").index("feedback")).isBlank(),"draft and pending submission do not change official value");
     Draft latest=store.workflow().draft(operator.actor(),draft.id());Map<String,String> later=draftForm(operatorSession,first,"提交后的后续草稿",latest.id(),Long.toString(latest.version()),"","save",id());check(post(operatorSession,"/workflow/draft/save",later).status==409&&get(operatorSession,"/workflow/edit?dataset=multi&draft="+draft.id()).status==409,"submitted draft version is frozen and old editor link is safe");
@@ -82,14 +82,16 @@ public final class WorkflowRoutesTest {
 
     Exchange pending=get(reviewerSession,"/workflow/reviews");check(pending.status==200&&pending.body().contains(shortIdText(submission.id()))&&pending.body().contains("复核待办"),"reviewer sees own-branch pending queue");
     Exchange detail=get(reviewerSession,"/workflow/submission?id="+submission.id());check(detail.status==200&&detail.body().contains("/workflow/review/approve")&&detail.body().contains("/workflow/review/reject")&&detail.body().contains("approve-"+submission.id())&&detail.body().contains("reject-"+submission.id()),"reviewer sees whole-submission forms with stable action request ids");
-    String approvalRequest=id();Exchange approved=post(reviewerSession,"/workflow/review/approve",Map.of("submissionId",submission.id(),"requestId",approvalRequest,"csrf",reviewerSession.csrf));
-    check(approved.status==200&&approved.body().contains("已通过"),"review approval succeeds");
-    check(post(reviewerSession,"/workflow/review/approve",Map.of("submissionId",submission.id(),"requestId",approvalRequest,"csrf",reviewerSession.csrf)).status==200,"same approval request is idempotent");
-    Exchange decided=post(reviewerSession,"/workflow/review/approve",Map.of("submissionId",submission.id(),"requestId",id(),"csrf",reviewerSession.csrf));check(decided.status==409&&decided.body().contains("已经处理"),"second reviewer decision reports already handled");
-    check(store.find(operator.actor(),first.id()).values().get(DatasetSchema.get("multi").index("feedback")).contains("<img"),"approved value becomes official exactly once");
+    String approvalRequest=id();Map<String,String> branchApproval=Map.of("submissionId",submission.id(),"recordIds",first.id(),"requestId",approvalRequest,"csrf",reviewerSession.csrf);Exchange approved=post(reviewerSession,"/workflow/review/approve",branchApproval);
+    Submission afterBranch=store.workflow().submission(reviewer.actor(),submission.id());check(approved.status==200&&approved.body().contains("支行复核已通过并提交分行")&&afterBranch.state()==State.PARTIAL&&afterBranch.rowStages().get(first.id())==RowStage.DIVISION_REVIEW&&afterBranch.rowStages().get(second.id())==RowStage.BRANCH_REVIEW,"selected branch row advances to division while the other row stays at branch review; nothing is published");
+    check(post(reviewerSession,"/workflow/review/approve",branchApproval).status==200,"same branch approval request is idempotent");
+    Exchange decided=post(reviewerSession,"/workflow/review/approve",Map.of("submissionId",submission.id(),"recordIds",first.id(),"requestId",id(),"csrf",reviewerSession.csrf));check(decided.status==409&&decided.body().contains("不在当前审核阶段"),"branch cannot approve the row a second time or bypass division");
+    check(store.find(operator.actor(),first.id()).values().get(DatasetSchema.get("multi").index("feedback")).isBlank(),"branch approval leaves official value unchanged");
+    Map<String,String> divisionApproval=Map.of("submissionId",submission.id(),"recordIds",first.id(),"requestId",id(),"csrf",divisionSession.csrf);Exchange published=post(divisionSession,"/workflow/review/approve",divisionApproval);
+    check(published.status==200&&published.body().contains("分行终审已通过")&&store.find(operator.actor(),first.id()).values().get(DatasetSchema.get("multi").index("feedback")).contains("<img"),"division approval publishes the immutable snapshot exactly once");
 
     Submission returned=submit(operatorSession,third,"待退回内容","");String reason="请补充 <核验> 原因";
-    Exchange returnedPage=post(reviewerSession,"/workflow/review/reject",Map.of("submissionId",returned.id(),"requestId",id(),"reason",reason,"csrf",reviewerSession.csrf));check(returnedPage.status==200&&returnedPage.body().contains("请补充 &lt;核验&gt; 原因"),"required reject reason is escaped and persisted");
+    Exchange returnedPage=post(reviewerSession,"/workflow/review/reject",Map.of("submissionId",returned.id(),"recordIds",third.id(),"requestId",id(),"reason",reason,"csrf",reviewerSession.csrf));check(returnedPage.status==200&&returnedPage.body().contains("请补充 &lt;核验&gt; 原因"),"required reject reason is escaped and persisted");
     Exchange ownerReturned=get(operatorSession,"/workflow/submission?id="+returned.id());check(ownerReturned.status==200&&ownerReturned.body().contains("恢复草稿并修订"),"returned owner receives draft revision link");
     Draft returnedDraft=store.workflow().draft(operator.actor(),returned.draftId());Map<String,String> resubmit=draftForm(operatorSession,third,"退回后修订内容",returnedDraft.id(),Long.toString(returnedDraft.version()),returned.id(),"preview",id());
     Exchange rePreview=post(operatorSession,"/workflow/draft/save",resubmit);Submission resubmitted=confirm(operatorSession,hidden(rePreview.body(),"previewId"));
@@ -97,7 +99,8 @@ public final class WorkflowRoutesTest {
 
     for(AuthService.Session directSession:List.of(divisionSession,branchSession,reviewerSession)) {
       BusinessRecord current=store.find(directSession.actor,fourth.id());Map<String,String> direct=directForm(directSession,current,"直接修改预览 "+directSession.actor.role());Exchange directPage=post(directSession,"/workflow/direct/preview",direct);
-      check(directPage.status==200&&directPage.body().contains("直接生效")&&directPage.body().contains("确认前正式数据没有变化"),directSession.actor.role()+" can preview direct change");
+      String outcome=directSession.actor.role()==Role.DIVISION_ADMIN?"分行终审并发布":"提交分行终审";
+      check(directPage.status==200&&directPage.body().contains(outcome)&&directPage.body().contains("正式值仍未改变"),directSession.actor.role()+" sees the correct direct-edit approval stage");
     }
     check(post(superSession,"/workflow/direct/preview",directForm(superSession,fourth,"超管越权")).status==403,"super administrator cannot use direct edit entry");
     check(post(operatorSession,"/workflow/direct/preview",directForm(operatorSession,fourth,"操作员越权")).status==403,"operator cannot bypass review with direct entry");
@@ -115,7 +118,9 @@ public final class WorkflowRoutesTest {
     BusinessRecord faultRecord=store.find(reviewer.actor(),seventh.id());Exchange faultPreview=post(reviewerSession,"/workflow/direct/preview",directForm(reviewerSession,faultRecord,"故障后不得部分写入"));String faultPreviewId=hidden(faultPreview.body(),"previewId"),faultRequest=id();failAt.set("confirmation-complete");
     Exchange failed=post(reviewerSession,"/workflow/confirm",Map.of("previewId",faultPreviewId,"requestId",faultRequest,"csrf",reviewerSession.csrf));failAt.set(null);
     check(failed.status==500&&failed.body().contains("事务未完成")&&store.find(reviewer.actor(),seventh.id()).values().get(DatasetSchema.get("multi").index("feedback")).isBlank(),"transaction failure is explicit and leaves official value unchanged");
-    Exchange retried=post(reviewerSession,"/workflow/confirm",Map.of("previewId",faultPreviewId,"requestId",faultRequest,"csrf",reviewerSession.csrf));check(retried.status==200&&store.find(reviewer.actor(),seventh.id()).values().get(DatasetSchema.get("multi").index("feedback")).equals("故障后不得部分写入"),"uncertain direct confirmation safely retries with original request id");
+    Exchange retried=post(reviewerSession,"/workflow/confirm",Map.of("previewId",faultPreviewId,"requestId",faultRequest,"csrf",reviewerSession.csrf));Submission directPending=store.workflow().submission(reviewer.actor(),submissionId(retried.body()));
+    check(retried.status==200&&directPending.state()==State.PENDING_DIVISION&&store.find(reviewer.actor(),seventh.id()).values().get(DatasetSchema.get("multi").index("feedback")).isBlank(),"uncertain direct confirmation retries into division queue without early publication");
+    var finalDirect=post(divisionSession,"/workflow/review/approve",Map.of("submissionId",directPending.id(),"recordIds",seventh.id(),"requestId",id(),"csrf",divisionSession.csrf));check(finalDirect.status==200&&store.find(reviewer.actor(),seventh.id()).values().get(DatasetSchema.get("multi").index("feedback")).equals("故障后不得部分写入"),"division explicitly publishes the retried branch edit");
   }
 
   static Submission submit(AuthService.Session session,BusinessRecord record,String value,String prior)throws Exception {
@@ -125,7 +130,7 @@ public final class WorkflowRoutesTest {
   static void integrationRegressions()throws Exception {
     {
     store.importRows(division.actor(),"cross",List.of(FoundationTest.candidate("cross","WUJIN","ROUTE-DRAFT-PAGES")),false,id());
-    var cross=store.list(operator.actor(),"cross",null,null).get(0);
+    var cross=store.list(operator.actor(),"cross",null,null).stream().filter(r->r.values().get(0).equals("ROUTE-DRAFT-PAGES")).findFirst().orElseThrow();
     for(int i=0;i<35;i++)store.workflow().saveDraft(operator.actor(),"",0,"cross",List.of(new RecordChange(cross.id(),cross.version(),Map.of("cross_feedback","PAGE-"+i))),"",id());
     var all=store.workflow().drafts(operator.actor(),"cross",0,100);
     String page1=get(operatorSession,"/workflow/drafts?dataset=cross").body(),page2=get(operatorSession,"/workflow/drafts?dataset=cross&page=2").body();
@@ -133,7 +138,8 @@ public final class WorkflowRoutesTest {
     check(!get(otherSession,"/workflow/drafts?dataset=cross").body().contains(all.get(0).id()),"draft pagination remains owner-only");
     }
     {
-    BusinessRecord pageRecord=store.list(operator.actor(),"multi",null,null).get(0);String field="feedback";
+    store.importRows(division.actor(),"multi",List.of(FoundationTest.candidate("multi","WUJIN","ROUTE-DRAFT-MANY")),false,id());
+    BusinessRecord pageRecord=store.list(operator.actor(),"multi",null,null).stream().filter(r->r.values().get(0).equals("ROUTE-DRAFT-MANY")).findFirst().orElseThrow();String field="feedback";
     for(int i=0;i<35;i++)store.workflow().saveDraft(operator.actor(),"",0,"multi",List.of(new RecordChange(pageRecord.id(),pageRecord.version(),Map.of(field,"分页草稿 "+i))),"",id());
     for(int i=35;i<136;i++)store.workflow().saveDraft(operator.actor(),"",0,"multi",List.of(new RecordChange(pageRecord.id(),pageRecord.version(),Map.of(field,"分页草稿 "+i))),"",id());
     var all=store.workflow().drafts(operator.actor(),"multi",0,100);var tail=store.workflow().drafts(operator.actor(),"multi",100,100);
@@ -181,6 +187,7 @@ public final class WorkflowRoutesTest {
     Consumer<String> checkpoint=point->{if(point.equals(failAt.get()))throw new IllegalStateException("synthetic fault at "+point);};return constructor.newInstance(data,clock,checkpoint);
   }
   static String hidden(String html,String name){Matcher m=Pattern.compile("name=\\\""+Pattern.quote(name)+"\\\" value=\\\"([^\\\"]*)\\\"").matcher(html);return m.find()?m.group(1):"";}
+  static String submissionId(String html){Matcher m=Pattern.compile("单号 ([A-Za-z0-9-]{10,})").matcher(html);if(!m.find())throw new AssertionError("confirmed page exposes stable submission id");return m.group(1);}
   static String shortIdText(String id){return id.substring(0,Math.min(8,id.length()));}
   static String id(){return UUID.randomUUID().toString();}
   static void check(boolean value,String message){assertions++;if(!value)throw new AssertionError(message);}

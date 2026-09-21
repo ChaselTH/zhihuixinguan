@@ -30,12 +30,13 @@ public class CompletionRulesTest {
       expect(ConcurrentModificationException.class,()->rules.save(f.div,"multi",Set.of(),0));
       check(f.store.find(f.op,row.id()).version()==row.version(),"rules do not mutate official row versions");
       var pending=f.pending(f.op,row,"partial feedback");check(!f.store.find(f.op,row.id()).complete(first),"draft and pending remain unofficial");
-      f.w().approve(f.review,pending.id(),id());var partial=f.store.find(f.op,row.id());
+      f.w().approve(f.review,pending.id(),id());check(f.store.find(f.op,row.id()).values().get(DatasetSchema.get("multi").index("feedback")).isEmpty(),"branch approval does not publish partial values");f.w().approve(f.div,pending.id(),id());var partial=f.store.find(f.op,row.id());
       check(!partial.complete(first)&&value(partial).equals("partial feedback"),"missing required fields do not block operator submission or approval");
-      var preview=f.w().previewDirect(f.branch,"multi",List.of(new RecordChange(partial.id(),partial.version(),Map.of("default_risk","否"))));f.w().confirm(f.branch,preview.id(),id());
-      var filled=f.store.find(f.op,row.id());check(filled.complete(first),"required yes/no false counts as filled");
-      var clear=f.w().previewDirect(f.review,"multi",List.of(new RecordChange(filled.id(),filled.version(),Map.of("feedback","","default_risk",""))));f.w().confirm(f.review,clear.id(),id());
-      check(!f.store.find(f.op,row.id()).complete(first),"clearing all required content may be confirmed and stays incomplete");
+      var preview=f.w().previewDirect(f.branch,"multi",List.of(new RecordChange(partial.id(),partial.version(),Map.of("default_risk","否"))));var branchEdit=f.w().confirm(f.branch,preview.id(),id());
+      check(!f.store.find(f.op,row.id()).complete(first),"branch edit waits for division before it can complete");f.w().approve(f.div,branchEdit.id(),id());
+      var filled=f.store.find(f.op,row.id());check(filled.complete(first),"required yes/no false counts as filled after division publication");
+      var clear=f.w().previewDirect(f.div,"multi",List.of(new RecordChange(filled.id(),filled.version(),Map.of("feedback","","default_risk",""))));f.w().confirm(f.div,clear.id(),id());
+      check(!f.store.find(f.op,row.id()).complete(first),"division administrator may confirm clearing required content; the formal row remains incomplete");
       for(String checkpoint:List.of("completion-rule-written","completion-rule-audited")){
         audits=f.store.diagnostics().get("audit_events");f.fail(checkpoint,1);
         expect(IllegalStateException.class,()->rules.save(f.div,"multi",Set.of("feedback"),1));
@@ -53,8 +54,8 @@ public class CompletionRulesTest {
     try(var f=new Fixture()){
       var r=f.record("WUJIN","multi");var pending=f.pending(f.op,r,"keep pending");
       f.store.deadlines().save(f.div,"multi",r.period().key(),"2099-12-31",0);int audits=f.store.diagnostics().get("audit_events");
-      f.store.close();try(var c=connect(f.dir);var st=c.createStatement()){st.execute("DROP TABLE completion_rules");st.execute("DELETE FROM schema_migrations WHERE version=8");st.execute("DELETE FROM schema_migration_attempts WHERE version=8");}
-      f.open();check(f.store.schemaVersion()==8&&f.store.find(f.op,r.id()).values().equals(r.values())&&f.store.diagnostics().get("audit_events")==audits,"V7 to V8 preserves rows and audit");
+      f.store.close();try(var c=connect(f.dir);var st=c.createStatement()){st.execute("DROP TABLE workflow_item_events");st.execute("DROP TABLE workflow_record_state");st.execute("ALTER TABLE submission_items DROP COLUMN workflow_state");st.execute("ALTER TABLE import_jobs DROP COLUMN selected_month");st.execute("DROP TABLE completion_rules");st.execute("DELETE FROM schema_migrations WHERE version>=8");st.execute("DELETE FROM schema_migration_attempts WHERE version>=8");}
+      f.open();check(f.store.schemaVersion()==10&&f.store.find(f.op,r.id()).values().equals(r.values())&&f.store.diagnostics().get("audit_events")==audits,"V7 to V10 preserves rows and audit");
       check(f.w().submission(f.op,pending.id()).state()==WorkflowContracts.State.SUBMITTED&&f.store.deadlines().visible(f.op).size()==1,"V7 pending snapshots and deadlines preserved");
       check(f.store.completionRules().visible(f.op).values().stream().allMatch(s->s.requiredFields().isEmpty()),"V7 migration initializes optional rules");
       f.store.completionRules().save(f.div,"multi",Set.of("default_risk"),0);f.w().approve(f.review,pending.id(),id());
