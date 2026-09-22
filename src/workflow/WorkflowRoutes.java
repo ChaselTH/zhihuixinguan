@@ -26,7 +26,7 @@ final class WorkflowRoutes {
 
   boolean get(HttpExchange x,AuthService.Session session,Map<String,String> query)throws Exception {
     String path=x.getRequestURI().getPath();
-    if(!Set.of("/workflow","/workflow/drafts","/workflow/edit","/workflow/preview","/workflow/submissions","/workflow/reviews","/workflow/submission","/workflow/reopen","/workflow/reconfirm").contains(path))return false;
+    if(!Set.of("/workflow","/workflow/drafts","/workflow/edit","/workflow/preview","/workflow/submissions","/workflow/reviews","/workflow/submission","/workflow/record-history","/workflow/reopen","/workflow/reconfirm").contains(path))return false;
     WorkflowPages pages=pages(session);
     try {
       switch(path) {
@@ -42,6 +42,10 @@ final class WorkflowRoutes {
         case "/workflow/submissions" -> send(x,200,submissions(pages,session,query,false));
         case "/workflow/reviews" -> send(x,200,submissions(pages,session,query,true));
         case "/workflow/submission" -> send(x,200,pages.submission(workflow.submission(session.actor,required(query,"id")),notice(query)));
+        case "/workflow/record-history" -> {
+          BusinessRecord row=store.find(session.actor,required(query,"record"));
+          send(x,200,pages.recordHistory(row,workflow.recordEvents(session.actor,row.id(),0,100),workflow.recordHistory(session.actor,row.id(),0,50)));
+        }
         case "/workflow/reopen" -> {AccessPolicy.require(session.actor,AccessPolicy.Action.DIVISION_REVIEW,Organizations.DIVISION);BusinessRecord row=store.find(session.actor,required(query,"record"));if((row.workflowStage()==RowStage.PUBLISHED||row.workflowStage()==RowStage.LEGACY_PUBLISHED)&&!store.completionRules().visible(session.actor).get(row.dataset()).complete(row.values()))throw new IllegalArgumentException("该行尚未满足正式完成规则，无需执行终审重开");if(row.workflowStage()!=RowStage.PUBLISHED&&row.workflowStage()!=RowStage.LEGACY_PUBLISHED&&row.workflowStage()!=RowStage.RETURNED)throw new IllegalArgumentException("只能查看正式已完成或退回的记录");send(x,200,pages.reopen(row,notice(query)));}
         case "/workflow/reconfirm" -> {BusinessRecord row=store.find(session.actor,required(query,"record"));if(!canEditStage(session.actor,row)||row.workflowStage()!=RowStage.RETURNED)throw new SecurityException("该记录当前不在可核对的退回范围");send(x,200,pages.reconfirm(row));}
         default -> { return false; }

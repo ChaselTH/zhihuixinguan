@@ -1,6 +1,7 @@
 import java.math.*;
 import java.util.*;
 import xinguan.platform.*;
+import xinguan.platform.WorkflowContracts.RowStage;
 
 final class DashboardData {
   final RangeSelection range;final List<String> months;final List<ImportRecord> records;
@@ -42,8 +43,13 @@ final class DashboardData {
       if(status.equals("complete")&&!ref.complete()||status.equals("incomplete")&&ref.complete())continue;
       if(status.equals("overdue")&&!ref.overdue())continue;
       if(needle.isEmpty()||ref.values.stream().anyMatch(v->v.toLowerCase(Locale.ROOT).contains(needle)))result.add(ref);
-    }return result;
+    }
+    // Rows already waiting on branch or division review float to the top so they are handled first;
+    // List.sort is stable, so rows inside each group keep their original source order.
+    result.sort(Comparator.comparingInt(DashboardData::reviewPriority));
+    return result;
   }
+  private static int reviewPriority(RowRef ref){RowStage stage=ref.record.workflowStage;return stage==RowStage.BRANCH_REVIEW||stage==RowStage.DIVISION_REVIEW?0:1;}
   List<FeedbackPeriod> feedbackPeriods(){
     Map<String,FeedbackPeriod> grouped=new LinkedHashMap<>();
     for(ImportRecord r:records){

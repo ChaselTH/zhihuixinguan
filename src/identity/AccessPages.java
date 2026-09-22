@@ -10,7 +10,18 @@ final class AccessPages extends PageLayout {
     return page("申请权限",b.append("<label>统一认证号<input name=\"number\" maxlength=\"20\" autocomplete=\"off\" required=\"required\"></label><label>姓名<input name=\"name\" maxlength=\"100\" autocomplete=\"off\" required=\"required\"></label><button class=\"btn btn-primary\" type=\"submit\">提交申请</button> <a class=\"btn btn-light\" href=\"/login\">返回登录</a></form></section></div>").toString());
   }
   String receipt(){return page("申请已接收",header()+"<div class=\"page-shell\"><section class=\"identity-card identity-narrow\"><h1>申请已接收</h1><p>如符合开户条件，管理员将在核验后处理。已有账号或相同待办不会重复创建。请联系本机构管理员了解结果和领取初始密码。</p><a class=\"btn btn-primary\" href=\"/login\">返回登录</a></section></div>");}
-  String safety(){return page("数据安全提示",header()+"<div class=\"page-shell\"><section class=\"identity-card identity-narrow safety-card\"><span class=\"eyebrow\">登录确认</span><h1>数据安全提示</h1><p class=\"field-note\">正式提示文本待配置；当前为测试占位标题，不代表正式安全审批已完成。</p><form method=\"post\" action=\"/security/ack\">"+hidden("csrf",currentSession.csrf)+hidden("noticeVersion",AccessPlatform.SAFETY_VERSION)+"<button class=\"btn btn-primary\" type=\"submit\">确认并进入</button></form></section></div>");}
+  String safety(){
+    StringBuilder b=new StringBuilder(header()).append("<div class=\"page-shell\"><section class=\"identity-card identity-narrow safety-card\"><span class=\"eyebrow\">登录确认</span><h1>数据安全提示</h1>")
+      .append("<p>本系统仅限行内获准的隔离内网使用，涉及企业预警、信贷及客户信息。请确认以下要求后再进入：</p>")
+      .append("<ul class=\"safety-list\">")
+      .append("<li>仅使用本人账号登录，账号和密码不得转借、共用或写在便签、公共设备上；首次登录后请立即修改初始密码。</li>")
+      .append("<li>只查询、填写、复核和导出与本人岗位职责、授权机构范围相符的数据，不越权查看其他支行或他人信息。</li>")
+      .append("<li>业务数据、客户信息和导出文件严禁通过微信、外网邮箱、网盘、U 盘等方式传出；导出文件使用后及时删除。</li>")
+      .append("<li>登录、填报、复核、退回和导出等操作均会留痕并可审计，请如实操作，不得代他人操作或伪造审批。</li>")
+      .append("<li>离开工位请退出登录或锁定屏幕；发现账号异常、误发数据或泄露风险，立即报告本机构管理员。</li>")
+      .append("</ul><form method=\"post\" action=\"/security/ack\">").append(hidden("csrf",currentSession.csrf)).append(hidden("noticeVersion",AccessPlatform.SAFETY_VERSION)).append("<button class=\"btn btn-primary\" type=\"submit\">我已阅读并确认</button></form></section></div>");
+    return page("数据安全提示",b.toString());
+  }
   String applications(List<AccessPlatform.Application> rows,boolean pending,int offset) {
     StringBuilder b=new StringBuilder(header()).append("<div class=\"page-shell\"><h1>权限申请审批</h1><p>支行管理员可审批本支行操作员、复核员；需开通支行管理员时转交分行。分行人员仅由超级管理员审批。高层管理员可处理其管理范围内的申请。</p><p><a href=\"/access/requests\">待处理</a> · <a href=\"/access/requests?all=yes\">全部申请</a></p><div class=\"table-scroll\"><table class=\"data-table\"><thead><tr><th>申请时间</th><th>姓名</th><th>统一认证号</th><th>机构</th><th>目标角色</th><th>状态</th><th>操作</th></tr></thead><tbody>");
     for(var r:rows)b.append("<tr><td>").append(e(time(r.createdAt()))).append("</td><td>").append(e(r.name())).append("</td><td>").append(e(r.number())).append("</td><td>").append(e(Organizations.label(r.organization()))).append("</td><td>").append(r.requestedRole()==null?"历史申请":roleName(r.requestedRole())).append("</td><td>").append(state(r.state())).append("</td><td><a href=\"/access/request?id=").append(u(r.id())).append("\">查看 / 审批</a></td></tr>");

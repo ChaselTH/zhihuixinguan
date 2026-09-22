@@ -39,3 +39,16 @@
   }
   on(window, "load", init);
 }());
+
+/* Review "return" popup: ask for a mandatory reason and submit the row form; ES3/IE compatible. */
+function workflowRejectReason(form) {
+  if (!form) return false;
+  var reason = window.prompt("请输入退回原因（必填，最多 2000 字）：", "");
+  if (reason === null) return false;
+  reason = reason.replace(/^\s+|\s+$/g, "");
+  if (reason === "") { window.alert("退回原因不能为空。"); return false; }
+  if (reason.length > 2000) { window.alert("退回原因不能超过 2000 字。"); return false; }
+  var field = form.elements ? form.elements["reason"] : null;
+  if (field) field.value = reason;
+  return true;
+}

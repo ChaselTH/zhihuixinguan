@@ -28,6 +28,9 @@ public final class WorkflowContracts {
   public record FieldDiff(String key, String title, String before, String after) {}
   public record AuditEntry(String id, Instant at, String actorId, String actorName, String actorRole,
                            String recordId, String action, String requestId, String before, String after, String details) {}
+  /** One immutable row-level workflow event: who did what to this business row, when and why. */
+  public record ItemEvent(String id, Instant at, String submissionId, String action, String stage,
+                          String actorName, String actorRole, String reason) {}
   public record SnapshotRow(BusinessRecord before, RecordChange change) {
     public List<FieldDiff> fields() {
       DatasetSchema schema=DatasetSchema.get(before.dataset());
@@ -93,6 +96,8 @@ public final class WorkflowContracts {
     List<Submission> pendingReviews(ActorContext actor, Query query);
     List<Submission> pendingDivisionReviews(ActorContext actor, Query query);
     List<Submission> recordHistory(ActorContext actor, String recordId, int offset, int limit);
+    /** Row-level operation timeline (submitted/reviewed/returned/published) with the operator name. */
+    List<ItemEvent> recordEvents(ActorContext actor, String recordId, int offset, int limit);
     List<AuditEntry> auditTrail(ActorContext actor, String submissionId);
     Submission approve(ActorContext actor, String submissionId, String requestId);
     Submission reject(ActorContext actor, String submissionId, String reason, String requestId);

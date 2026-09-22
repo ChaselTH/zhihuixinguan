@@ -212,6 +212,15 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
       return List.copyOf(result);
     });
   }
+  @Override public List<ItemEvent> recordEvents(ActorContext a,String recordId,int offset,int limit) {
+    return call(a,()->{
+      store.find(a,recordId);page(offset,limit);List<ItemEvent> result=new ArrayList<>();
+      try(PreparedStatement st=statement("SELECT id,event_at,submission_id,action,stage,actor_name,actor_role,reason FROM workflow_item_events WHERE record_id=? ORDER BY event_at DESC,id DESC LIMIT ? OFFSET ?",recordId,limit,offset);ResultSet rs=st.executeQuery()) {
+        while(rs.next())result.add(new ItemEvent(rs.getString(1),Instant.parse(rs.getString(2)),blank(rs.getString(3)),rs.getString(4),rs.getString(5),rs.getString(6),rs.getString(7),blank(rs.getString(8))));
+      }
+      return List.copyOf(result);
+    });
+  }
   @Override public List<AuditEntry> auditTrail(ActorContext a,String submissionId) {
     return call(a,()->{
       Submission submission=loadSubmission(a,submissionId);List<AuditEntry> result=new ArrayList<>();
@@ -245,7 +254,7 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
       exec("INSERT INTO workflow_item_events VALUES(?,?,?,?,?,?,?,?,?,?,?)",eventId,previous,recordId,RowStage.RETURNED.name(),"DIVISION_REOPENED",a.userId(),a.name(),a.role().name(),requestId,explanation,now);
       String auditId=audit(a,row.organizationId(),recordId,"DIVISION_REOPENED",requestId,Codec.encode(row.values()),Codec.encode(row.values()),explanation);
       if(previous!=null)linkAudits(previous,List.of(auditId));
-      List<String> recipients=new ArrayList<>();try(PreparedStatement st=statement("SELECT id FROM users WHERE active=TRUE AND organization_id=? AND role IN ('OPERATOR','BRANCH_ADMIN','REVIEWER') ORDER BY role,id",row.organizationId());ResultSet rs=st.executeQuery()){while(rs.next())recipients.add(rs.getString(1));}
+      List<String> recipients=reopenRecipients(row);
       emit("DIVISION_REOPENED",row.organizationId(),"已终审记录退回支行待处理",summary(a,row.dataset(),1),previous==null?"":previous,recipients,"reopen-"+eventId);
       checkpoint.accept("completed-row-reopened");remember(a,requestId,hash,eventId);return eventId;
     });
@@ -280,6 +289,10 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
         String confirmer=scalar("SELECT actor_id FROM workflow_item_events WHERE submission_id=? AND record_id=? AND action='BRANCH_APPROVED' AND actor_role='REVIEWER' ORDER BY event_at DESC,id DESC LIMIT 1",id,row.before().id());
         if(confirmer==null||confirmer.equals(a.userId()))throw new SecurityException("导入候选须先经独立支行复核员明确确认，才能分行终审");
       }
+      // Division rejection of a two-stage (operator/import) submission returns the rows to the
+      // branch reviewer who handled them, not straight back to the operator; direct edits keep
+      // the original "return to submitter" behaviour.
+      boolean divisionReturnsToReviewer=divisionReview&&!approve&&(submission.mode()==Mode.REVIEW||submission.mode()==Mode.IMPORT);
       List<String> recipients=List.of(submission.ownerId());
       if(branchReview&&approve) {
         if(submission.mode()!=Mode.IMPORT){UserAccount owner=store.sessionUser(submission.ownerId());if(owner==null||!owner.active()||owner.role()!=Role.OPERATOR||!owner.organizationId().equals(submission.organizationId()))throw error(Code.OWNER_CHANGED,"提交人的账号或机构权限已变化；请退回并重新核对，不得直接批准");}
@@ -290,8 +303,10 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
         if(submission.mode()!=Mode.IMPORT){UserAccount owner=store.sessionUser(submission.ownerId());if(owner==null||!owner.active()||!owner.organizationId().equals(submission.organizationId())||!Set.of(Role.OPERATOR,Role.BRANCH_ADMIN,Role.REVIEWER).contains(owner.role()))throw error(Code.OWNER_CHANGED,"提交人的账号或机构权限已变化；请退回并重新核对，不得直接发布");}
         validateSnapshot(a,selected,AccessPolicy.Action.DIRECT_EDIT,true);
         linkAudits(id,store.applyOfficialChanges(a,changes(selected),AccessPolicy.Action.DIRECT_EDIT,"DIVISION_APPROVED",requestId,id+";submitter="+submission.ownerId()));
+      } else if(divisionReturnsToReviewer) {
+        recipients=divisionReturnReviewers(submission.organizationId(),selected);
       }
-      RowStage next=approve?(branchReview?RowStage.DIVISION_REVIEW:RowStage.PUBLISHED):RowStage.RETURNED;
+      RowStage next=approve?(branchReview?RowStage.DIVISION_REVIEW:RowStage.PUBLISHED):divisionReturnsToReviewer?RowStage.BRANCH_REVIEW:RowStage.RETURNED;
       String action=branchReview?(approve?"BRANCH_APPROVED":"BRANCH_RETURNED"):(approve?"DIVISION_APPROVED":"DIVISION_RETURNED");
       String decidedAt=now();
       for(var row:selected) {
@@ -309,7 +324,7 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
       List<String> auditIds=new ArrayList<>();for(var row:selected)auditIds.add(audit(a,row.before().organizationId(),row.before().id(),action,requestId,"","",explanation));linkAudits(id,auditIds);
       checkpoint.accept("decision-written");
       String noticeType=branchReview?(approve?"BRANCH_APPROVED":"BRANCH_RETURNED"):(approve?"DIVISION_APPROVED":"DIVISION_RETURNED");
-      String noticeTitle=branchReview?(approve?"支行复核通过，待分行终审":"支行已退回修改"):(approve?"分行终审通过并发布":"分行终审退回修改");
+      String noticeTitle=branchReview?(approve?"支行复核通过，待分行终审":"支行已退回修改"):(approve?"分行终审通过并发布":divisionReturnsToReviewer?"分行退回，待支行复核处理":"分行终审退回修改");
       emit(noticeType,submission.organizationId(),noticeTitle,summary(a,submission.dataset(),selected.size()),id,recipients,"decision-"+id+"-"+hash.substring(0,24));
       remember(a,requestId,hash,id);checkpoint.accept("decision-complete");return loadSubmission(a,id);
     });
@@ -556,6 +571,22 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
   }
   private List<String> divisionAdmins()throws SQLException {
     List<String> result=new ArrayList<>();try(PreparedStatement st=statement("SELECT id FROM users WHERE active=TRUE AND role='DIVISION_ADMIN' ORDER BY id");ResultSet rs=st.executeQuery()){while(rs.next())result.add(rs.getString(1));}return result;
+  }
+  /** Branch reviewers that previously approved these rows; falls back to every branch reviewer. */
+  private List<String> divisionReturnReviewers(String org,List<SnapshotRow> rows)throws SQLException {
+    LinkedHashSet<String> candidates=new LinkedHashSet<>();
+    for(var row:rows){String reviewer=scalar("SELECT actor_id FROM workflow_item_events WHERE record_id=? AND actor_role='REVIEWER' AND action='BRANCH_APPROVED' ORDER BY event_at DESC,id DESC LIMIT 1",row.before().id());if(reviewer!=null)candidates.add(reviewer);}
+    List<String> recipients=new ArrayList<>();for(String id:candidates){UserAccount user=store.sessionUser(id);if(user!=null&&user.active()&&org.equals(user.organizationId()))recipients.add(id);}
+    return recipients.isEmpty()?reviewers(org):List.copyOf(recipients);
+  }
+  /** Reopened rows go to their submitter and the reviewer who last handled them, not the whole branch. */
+  private List<String> reopenRecipients(BusinessRecord row)throws SQLException {
+    LinkedHashSet<String> candidates=new LinkedHashSet<>();
+    String owner=scalar("SELECT owner_id FROM workflow_record_state WHERE record_id=?",row.id());if(owner!=null)candidates.add(owner);
+    String reviewer=scalar("SELECT actor_id FROM workflow_item_events WHERE record_id=? AND actor_role='REVIEWER' AND action IN ('BRANCH_APPROVED','BRANCH_RETURNED') ORDER BY event_at DESC,id DESC LIMIT 1",row.id());if(reviewer!=null)candidates.add(reviewer);
+    List<String> recipients=new ArrayList<>();for(String id:candidates){UserAccount user=store.sessionUser(id);if(user!=null&&user.active()&&row.organizationId().equals(user.organizationId()))recipients.add(id);}
+    if(recipients.isEmpty())try(PreparedStatement st=statement("SELECT id FROM users WHERE active=TRUE AND organization_id=? AND role IN ('OPERATOR','BRANCH_ADMIN','REVIEWER') ORDER BY role,id",row.organizationId());ResultSet rs=st.executeQuery()){while(rs.next())recipients.add(rs.getString(1));}
+    return recipients;
   }
   private void setWorkflowState(ActorContext actor,String submissionId,String recordId,String ownerId,RowStage stage,String reason,String action,String requestId,String at)throws SQLException {
     exec("UPDATE submission_items SET workflow_state=? WHERE submission_id=? AND record_id=?",stage.name(),submissionId,recordId);

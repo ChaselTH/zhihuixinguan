@@ -36,7 +36,7 @@ public final class BusinessViewTest {
         expect(WorkflowException.class,()->workflow.saveDraft(peer,"",0,dataset,List.of(new RecordChange(official.id(),official.version(),Map.of(field,"PEER-PENDING"))),"",id()));
         check(workflow.drafts(peer,dataset,0,10).isEmpty(),"parallel operator cannot create a second active task for an in-flight row");
         check(view(data,operator).completedCount()==0,"pending does not increase official completion");
-        check(pages(reviewer).details(view(data,reviewer),filter(reviewer,dataset,"all"),1,BusinessWorkflowState.load(platform,reviewer,List.of(row))).contains("去复核"),"review entry attached to pending record");
+        String reviewerDetails=pages(reviewer).details(view(data,reviewer),filter(reviewer,dataset,"all"),1,BusinessWorkflowState.load(platform,reviewer,List.of(row)));check(reviewerDetails.contains("去复核")&&!reviewerDetails.contains("查看提交回执")&&reviewerDetails.contains("查看历史修改记录"),"reviewer sees a single review entry plus row history without duplicate receipt");
         workflow.reject(reviewer,pending.id(),"B2-RETURN-REASON",id());
         dashboard=view(data,operator);row=dashboard.rows(dataset).get(0);var returned=BusinessWorkflowState.load(platform,operator,List.of(row));check(returned.get(row.record.id).draft()!=null&&returned.get(row.record.id).pending()==null,"returned draft recoverable");
         var returnedPage=pages(operator).details(dashboard,filter(operator,dataset,"all"),1,returned);check(returnedPage.contains("退回待修改")&&returnedPage.contains("B2-RETURN-REASON"),"returned label and reason separate from official completion");

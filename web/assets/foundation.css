@@ -45,3 +45,5 @@
 .people-actions .btn-delete-person{padding:6px 12px;font-size:14px;margin-top:4px;margin-bottom:4px}
 .person-delete-summary dt{font-size:13px;color:#647286;margin-top:12px}
 .person-delete-summary dd{margin:3px 0 14px;font-size:17px;word-wrap:break-word}
+.safety-list{margin:0 0 18px;padding-left:20px;color:#38566f;line-height:1.7}
+.safety-list li{margin-bottom:7px}
