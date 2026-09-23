@@ -32,22 +32,21 @@ function fixture(legacy) {
   const confirmed = element('input'); confirmed.name = 'confirmed'; confirmed.value = ''; form.appendChild(confirmed);
   const note = element('p', 'import-selected-count'); if (!legacy) note.textContent = ''; form.appendChild(note);
   body.appendChild(form);
-  const win = element('window'); win.location = { protocol: 'http:', host: '127.0.0.1:2874' };
-  let backCount = 0, accepted = false, prompt = '';
-  win.history = { length: 2, back() { backCount++; } };
+  const win = element('window'); win.location = { protocol: 'http:', host: '127.0.0.1:2874', href: 'http://127.0.0.1:2874/details?month=2026-09' };
+  let accepted = false, prompt = '';
   win.confirm = text => { prompt = text; return accepted; };
   const doc = {
     referrer: 'http://127.0.0.1:2874/?month=2026-09',
     getElementsByTagName: tag => body.getElementsByTagName(tag),
     createElement(tag) {
       const e = element(tag);
-      if (tag === 'a') Object.defineProperty(e, 'href', { set(v) { const u = new URL(v); this.protocol = u.protocol; this.host = u.host; } });
+      if (tag === 'a') Object.defineProperty(e, 'href', { get() { return this.url; }, set(v) { const u = new URL(v); this.url = u.href; this.protocol = u.protocol; this.host = u.host; } });
       return e;
     }
   };
   vm.runInNewContext(source, { document: doc, window: win }); win.fire('load');
   return { body, bottom, table, form, select, confirmed, note, win, doc, back,
-    top: body.children[0], accept(v) { accepted = v; }, prompt: () => prompt, backCount: () => backCount };
+    top: body.children[0], accept(v) { accepted = v; }, prompt: () => prompt };
 }
 for (const legacy of [false, true]) {
   const f = fixture(legacy);
@@ -62,8 +61,8 @@ for (const legacy of [false, true]) {
   f.accept(true); const accepted = f.form.fire('submit'); check(accepted.returnValue !== false && f.confirmed.value === 'yes', 'OK submits explicit confirmed flag');
   check(f.prompt().includes('空白也会清空') && f.prompt().includes('预计更新 4 条'), 'overwrite prompt includes counts and clearing warning');
   f.select.value = 'preserve'; f.select.fire('change'); f.form.fire('submit'); check(!f.prompt().includes('空白也会清空'), 'preserve prompt does not claim destructive clearing');
-  const backEvent = f.back.fire('click'); check(backEvent.returnValue === false && f.backCount() === 1, 'same-origin back navigates history');
-  f.doc.referrer = 'http://other.invalid/'; check(f.back.fire('click').returnValue !== false && f.backCount() === 1, 'foreign referrer leaves safe fallback link intact');
+  const backEvent = f.back.fire('click'); check(backEvent.returnValue === false && f.win.location.href === f.doc.referrer, 'same-origin back opens the exact referring page with its filters');
+  f.doc.referrer = 'http://other.invalid/'; check(f.back.fire('click').returnValue !== false && f.win.location.href !== f.doc.referrer, 'foreign referrer leaves safe fallback link intact');
 }
 check(!/\b(?:const|let|Promise|fetch)\b|=>|\.classList|\.closest\(/.test(source), 'production interactions avoid modern-only syntax and APIs');
 console.log('BUSINESS_INTERACTIONS_OK assertions=' + assertions + ' modern/attachEvent DOM stubs; not real IE verification');

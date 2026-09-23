@@ -56,7 +56,7 @@
     links = document.getElementsByTagName("a");
     for (i = 0; i < links.length; i++) if (links[i].getAttribute("data-back") === "yes") on(links[i], "click", function (e) {
       var ref = document.createElement("a"); ref.href = document.referrer;
-      if (document.referrer && ref.protocol === window.location.protocol && ref.host === window.location.host && window.history.length > 1) { stop(e); window.history.back(); }
+      if (document.referrer && ref.protocol === window.location.protocol && ref.host === window.location.host && ref.href !== window.location.href) { stop(e); window.location.href = ref.href; }
     });
     forms = document.getElementsByTagName("form");
     for (i = 0; i < forms.length; i++) if (has(forms[i], "import-bulk-confirm")) importForm(forms[i]);

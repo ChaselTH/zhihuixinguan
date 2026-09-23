@@ -84,8 +84,16 @@ final class WorkflowRoutes {
         }
         case "/workflow/review/reject" -> {
           requireReviewer(session.actor);
-          Submission result=workflow.rejectRows(session.actor,required(form,"submissionId"),recordIds(required(form,"recordIds")),form.get("reason"),required(form,"requestId"));
-          send(x,200,pages.submission(result,"已退回且未修改正式值；提交人可以恢复草稿后重新提交。"));
+          String submissionId=required(form,"submissionId"),requestId=required(form,"requestId");List<String> ids=recordIds(required(form,"recordIds"));
+          if(clean(form.get("reason")).isEmpty()) {
+            Submission submission=workflow.submission(session.actor,submissionId);
+            RowStage expected=session.actor.role()==Role.REVIEWER?RowStage.BRANCH_REVIEW:RowStage.DIVISION_REVIEW;
+            if(ids.stream().anyMatch(id->submission.rowStages().get(id)!=expected))throw new IllegalArgumentException("所选记录已不在当前复核阶段，请刷新待办");
+            send(x,200,pages.rejectReason(submission,ids,requestId));
+          } else {
+            Submission result=workflow.rejectRows(session.actor,submissionId,ids,form.get("reason"),requestId);
+            send(x,200,pages.submission(result,session.actor.role()==Role.DIVISION_ADMIN?"已退回对应支行复核员处理；正式值尚未改变。":"已退回对应操作员修改；正式值尚未改变。"));
+          }
         }
         case "/workflow/reopen" -> {
           AccessPolicy.require(session.actor,AccessPolicy.Action.DIVISION_REVIEW,Organizations.DIVISION);

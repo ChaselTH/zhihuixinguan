@@ -48,7 +48,9 @@ function workflowRejectReason(form) {
   reason = reason.replace(/^\s+|\s+$/g, "");
   if (reason === "") { window.alert("退回原因不能为空。"); return false; }
   if (reason.length > 2000) { window.alert("退回原因不能超过 2000 字。"); return false; }
-  var field = form.elements ? form.elements["reason"] : null;
-  if (field) field.value = reason;
+  var fields = form.getElementsByTagName("input"), field = null, i;
+  for (i = 0; i < fields.length; i++) if (fields[i].name === "reason") { field = fields[i]; break; }
+  if (!field) { window.alert("退回原因输入框未就绪，请刷新页面后重试。"); return false; }
+  field.value = reason;
   return true;
 }

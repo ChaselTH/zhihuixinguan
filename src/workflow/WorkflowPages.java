@@ -112,6 +112,13 @@ final class WorkflowPages extends PageLayout {
     return shell("提交详情","submission",b.toString());
   }
 
+  String rejectReason(Submission submission,List<String> recordIds,String requestId) {
+    StringBuilder b=new StringBuilder("<div class=\"workflow-title\"><h1>填写退回原因</h1><p>将退回 ").append(recordIds.size()).append(" 行 · ").append(e(DatasetSchema.get(submission.dataset()).label)).append("。原因会通知下一处理人并留在历史记录中。</p></div>");
+    b.append("<form method=\"post\" action=\"/workflow/review/reject\" class=\"workflow-reason-form\">").append(hidden("csrf",session.csrf)).append(hidden("submissionId",submission.id())).append(hidden("recordIds",String.join(",",recordIds))).append(hidden("requestId",requestId))
+      .append("<label for=\"review-reason\">退回原因（必填）</label><textarea id=\"review-reason\" name=\"reason\" rows=\"5\" maxlength=\"2000\" required=\"required\"></textarea><div class=\"workflow-reason-actions\"><button class=\"btn btn-primary\" type=\"submit\">确认退回</button><a class=\"btn btn-light\" href=\"/workflow/submission?id=").append(u(submission.id())).append("\">取消</a></div></form>");
+    return shell("填写退回原因","submission",b.toString());
+  }
+
   String reopen(BusinessRecord row,String notice) {
     DatasetSchema schema=DatasetSchema.get(row.dataset());String customer=schema.value(row.values(),schema.customerColumn);StringBuilder b=new StringBuilder(message(notice,false));
     b.append("<div class=\"workflow-title clearfix\"><h1>终审后退回修改 · ").append(e(schema.label)).append("</h1><p>").append(e(customer)).append(" · ").append(e(row.period().key())).append(" · 正式版本 ").append(row.version()).append("</p></div>");
@@ -273,7 +280,7 @@ final class WorkflowPages extends PageLayout {
         if(actionable!=null&&stage==actionable) {
           selected.add(recordId);String action=branch?"branch":"division";
           b.append("<form method=\"post\" action=\"/workflow/review/approve\" class=\"workflow-review-op\">").append(hidden("csrf",session.csrf)).append(hidden("submissionId",submission.id())).append(hidden("recordIds",recordId)).append(hidden("requestId",requestId(action+"-approve",submission.id()+"-"+recordId))).append("<button class=\"btn btn-primary\" type=\"submit\">复核通过</button></form>")
-            .append("<form method=\"post\" action=\"/workflow/review/reject\" class=\"workflow-review-op\">").append(hidden("csrf",session.csrf)).append(hidden("submissionId",submission.id())).append(hidden("recordIds",recordId)).append(hidden("reason","")).append(hidden("requestId",requestId(action+"-reject",submission.id()+"-"+recordId))).append("<button class=\"btn btn-light\" type=\"submit\" onclick=\"return workflowRejectReason(this.form);\">退回</button></form>");
+            .append("<form method=\"post\" action=\"/workflow/review/reject\" class=\"workflow-review-op\" onsubmit=\"return workflowRejectReason(this);\">").append(hidden("csrf",session.csrf)).append(hidden("submissionId",submission.id())).append(hidden("recordIds",recordId)).append(hidden("reason","")).append(hidden("requestId",requestId(action+"-reject",submission.id()+"-"+recordId))).append("<button class=\"btn btn-light\" type=\"submit\">退回</button></form>");
         } else b.append("<span class=\"workflow-status ").append(stageClass(stage)).append("\">").append(e(stageLabel(stage))).append("</span>");
         b.append("</td>");
         for(DatasetSchema.Field field:schema.fields){int index=schema.index(field.key());String before=schema.value(row.before().values(),index);String after=row.change().values().containsKey(field.key())?row.change().values().get(field.key()):before;boolean changed=!after.equals(before);
@@ -285,10 +292,10 @@ final class WorkflowPages extends PageLayout {
     }
     if(actionable!=null&&selected.size()>1) {
       String ids=String.join(",",selected);String scope=UUID.nameUUIDFromBytes(ids.getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();String action=branch?"branch":"division";
-      b.append("<div class=\"workflow-review-grid clearfix\"><form method=\"post\" action=\"/workflow/review/approve\" class=\"workflow-review-card approve\">").append(hidden("csrf",session.csrf)).append(hidden("submissionId",submission.id())).append(hidden("recordIds",ids)).append(hidden("requestId",requestId(action+"-approve-batch",submission.id()+"-"+scope))).append("<h2>整单复核通过（").append(selected.size()).append(" 行）</h2><p>一次处理当前仍处于此阶段的 ").append(selected.size()).append(" 行；版本冲突时整单回滚。</p><button class=\"btn btn-primary\" type=\"submit\">整单复核通过</button></form>")
-        .append("<form method=\"post\" action=\"/workflow/review/reject\" class=\"workflow-review-card reject\">").append(hidden("csrf",session.csrf)).append(hidden("submissionId",submission.id())).append(hidden("recordIds",ids)).append(hidden("reason","")).append(hidden("requestId",requestId(action+"-reject-batch",submission.id()+"-"+scope))).append("<h2>整单退回（").append(selected.size()).append(" 行）</h2><p>整单退回使用同一条退回原因，确认后整单退回。</p><button class=\"btn btn-light\" type=\"submit\" onclick=\"return workflowRejectReason(this.form);\">整单退回</button></form></div>");
+      b.append("<div class=\"workflow-batch-actions\"><span>批量处理当前待复核的 ").append(selected.size()).append(" 行：</span><form method=\"post\" action=\"/workflow/review/approve\">").append(hidden("csrf",session.csrf)).append(hidden("submissionId",submission.id())).append(hidden("recordIds",ids)).append(hidden("requestId",requestId(action+"-approve-batch",submission.id()+"-"+scope))).append("<button class=\"btn btn-primary\" type=\"submit\">全部通过</button></form>")
+        .append("<form method=\"post\" action=\"/workflow/review/reject\" onsubmit=\"return workflowRejectReason(this);\">").append(hidden("csrf",session.csrf)).append(hidden("submissionId",submission.id())).append(hidden("recordIds",ids)).append(hidden("reason","")).append(hidden("requestId",requestId(action+"-reject-batch",submission.id()+"-"+scope))).append("<button class=\"btn btn-light\" type=\"submit\">全部退回</button></form></div>");
     }
-    if(actionable!=null)b.append("<noscript><p class=\"workflow-callout warning\">浏览器未启用脚本时退回原因无法弹窗输入，请改用支持脚本的浏览器或联系管理员处理。</p></noscript>");
+    if(actionable!=null)b.append("<noscript><p class=\"workflow-callout warning\">点击退回后请在下一页填写原因并确认。</p></noscript>");
     return b.append("</div>").toString();
   }
   private static String stageLabel(RowStage stage){return switch(stage){case READY->"待支行处理";case BRANCH_REVIEW->"待支行复核";case DIVISION_REVIEW->"待分行终审";case RETURNED->"退回待修改";case PUBLISHED->"已终审发布";case LEGACY_PUBLISHED->"旧版正式保留";};}

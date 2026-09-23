@@ -24,4 +24,14 @@ for(const legacy of [false,true])for(const action of ['/workflow/draft/save','/u
   win.fire('pageshow');check(typeof win.fire('beforeunload').returnValue==='string','browser back/bfcache resets submit exemption');
 }
 check(!/\b(const|let|Promise|fetch)\b|=>|\.classList|\.closest\(/.test(source),'ES3 syntax/API baseline');
+for (const legacy of [false, true]) {
+  const reason = node('input', legacy); reason.name = 'reason';
+  const form = node('form', legacy, [reason]);
+  const win = { prompt: () => '请补齐资料', alert: () => { throw new Error('unexpected alert'); } };
+  const context = { window: win, document: { getElementsByTagName: () => [] } };
+  vm.runInNewContext(source, context);
+  check(context.workflowRejectReason(form) === true && reason.value === '请补齐资料', 'return popup writes to hidden reason field with modern/legacy DOM');
+  win.prompt = () => null;
+  check(context.workflowRejectReason(form) === false, 'cancelled return never submits');
+}
 console.log('WORKFLOW_INTERACTIONS_OK assertions='+assertions+' modern/attachEvent stubs; not actual IE');

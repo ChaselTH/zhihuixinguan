@@ -41,7 +41,7 @@ final class WorkflowIntegrationHttpTest {
     check(detail.contains("/workflow/submission?id="+first),"A1 notification links actual B1 submission");
     Map<String,String> open=HttpSmokeTest.hidden(notices);open.put("id",notice);check(post("/notifications/open",open).statusCode()==303,"notification open marks read and targets submission");
     String queue=get("/workflow/reviews").body();check(queue.contains(first.substring(0,8))&&!queue.contains("<option value=\"APPROVED\""),"read notice does not clear pending review; filter markup valid");
-    var rejection=form(get("/workflow/submission?id="+first).body(),"/workflow/review/reject");rejection.put("reason","");check(post("/workflow/review/reject",rejection).statusCode()==400,"return reason required");
+    var rejection=form(get("/workflow/submission?id="+first).body(),"/workflow/review/reject");rejection.put("reason","");var reasonPage=post("/workflow/review/reject",rejection);check(reasonPage.statusCode()==200&&reasonPage.body().contains("填写退回原因")&&reasonPage.body().contains("name=\"reason\"")&&!exportText("negative").contains("INTEGRATION_DRAFT_ONLY"),"missing popup reason opens a safe editable reason page without changing official data");
     rejection.put("reason","补充 <核验> 内容");check(post("/workflow/review/reject",rejection).statusCode()==200,"reviewer returns through Main");
     check(!exportText("negative").contains("INTEGRATION_DRAFT_ONLY"),"returned snapshot excluded from export");
     use(operator);String returned=get("/workflow/submission?id="+first).body();String resume=unescape(match(returned,"href=\"([^\"]+)\">恢复草稿并修订"));
