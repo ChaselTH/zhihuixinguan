@@ -32,7 +32,8 @@ class PageLayout {
     if(!r.scope.equals("custom"))b.append(hidden("start",r.start)).append(hidden("end",r.end));
     return b.append("<button class=\"btn btn-dark\" type=\"submit\">查看</button></div></div></form>").toString();
   }
-  static String backButton(String fallback){return "<p class=\"business-back\"><a class=\"btn btn-light\" data-back=\"yes\" href=\""+e(fallback)+"\">← 返回上一页</a></p>";}
+  static String backButton(String fallback){return backButton(fallback,false);}
+  static String backButton(String fallback,boolean exact){return "<p class=\"business-back\"><a class=\"btn btn-light\" data-back=\""+(exact?"fixed":"yes")+"\" href=\""+e(fallback)+"\">← 返回上一页</a></p>";}
   static String rangeHidden(RangeSelection r){StringBuilder b=new StringBuilder();r.asParameters().forEach((k,v)->b.append(hidden(k,v)));return b.toString();}
   static String hidden(String name,String value){return "<input type=\"hidden\" name=\""+e(name)+"\" value=\""+e(value)+"\">";}
   static String option(String value,String label,String selected){return "<option value=\""+e(value)+"\""+(value.equals(selected)?" selected=\"selected\"":"")+">"+e(label)+"</option>";}

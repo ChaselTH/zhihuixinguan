@@ -235,9 +235,61 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
     });
   }
   @Override public Submission approve(ActorContext a,String id,String requestId) { return decide(a,id,null,"",requestId,true); }
+  @Override public Set<String> branchRevisionRows(ActorContext a,String submissionId) {
+    return call(a,()->{
+      if(a.role()!=Role.REVIEWER)throw new SecurityException("只有支行复核员可以查看退回修改入口");
+      Submission submission=loadAuthorizedSubmission(a,submissionId);if(submission.mode()!=Mode.REVIEW)return Set.of();
+      Set<String> visible=new HashSet<>();for(var row:submission.rows())if(submission.rowStages().get(row.before().id())==RowStage.BRANCH_REVIEW)visible.add(row.before().id());
+      Set<String> result=new HashSet<>();try(PreparedStatement st=statement("SELECT DISTINCT record_id FROM workflow_item_events WHERE submission_id=? AND action='DIVISION_RETURNED'",submissionId);ResultSet rs=st.executeQuery()){while(rs.next())if(visible.contains(rs.getString(1)))result.add(rs.getString(1));}
+      return Set.copyOf(result);
+    });
+  }
   @Override public Submission reject(ActorContext a,String id,String reason,String requestId) { return decide(a,id,null,reason,requestId,false); }
   @Override public Submission approveRows(ActorContext a,String id,List<String> recordIds,String requestId) { return decide(a,id,recordIds,"",requestId,true); }
   @Override public Submission rejectRows(ActorContext a,String id,List<String> recordIds,String reason,String requestId) { return decide(a,id,recordIds,reason,requestId,false); }
+  @Override public Submission reviseForDivision(ActorContext a,String submissionId,String recordId,long expectedVersion,Map<String,String> proposed,String requestId) {
+    return call(a,()->{
+      if(a.role()!=Role.REVIEWER)throw new SecurityException("只有支行复核员可以修改分行退回的提交");
+      Submission old=loadAuthorizedSubmission(a,submissionId);
+      AccessPolicy.require(a,AccessPolicy.Action.REVIEW,old.organizationId());
+      if(proposed==null)throw error(Code.INVALID_INPUT,"缺少修改内容");
+      String hash=hash("REVIEWER_REVISE",submissionId,recordId,Long.toString(expectedVersion),WorkflowCodec.changes(List.of(new RecordChange(recordId,expectedVersion,proposed))));
+      String repeated=repeat(a,requestId,hash);if(repeated!=null)return loadSubmission(a,repeated);
+      if(old.mode()!=Mode.REVIEW||old.rowStages().get(recordId)!=RowStage.BRANCH_REVIEW)throw error(Code.ALREADY_DECIDED,"该行不在可修改的支行复核阶段");
+      SnapshotRow previous=selectedRows(old,List.of(recordId)).get(0);
+      BusinessRecord current=store.find(a,recordId);
+      if(!old.organizationId().equals(current.organizationId())||!old.dataset().equals(current.dataset()))throw new SecurityException("记录机构或表种不一致");
+      if(!submissionId.equals(scalar("SELECT submission_id FROM workflow_record_state WHERE record_id=?",recordId))||current.workflowStage()!=RowStage.BRANCH_REVIEW)throw error(Code.ALREADY_DECIDED,"该行复核任务已变化，请刷新");
+      if(scalar("SELECT id FROM workflow_item_events WHERE submission_id=? AND record_id=? AND action='DIVISION_RETURNED' ORDER BY event_at DESC,id DESC LIMIT 1",submissionId,recordId)==null)throw error(Code.ALREADY_DECIDED,"只有分行退回后才可修改重提；首次复核请直接通过或退回操作员");
+      if(current.version()!=expectedVersion||!current.values().equals(previous.before().values()))throw error(Code.VERSION_CONFLICT,"正式数据已变化，请刷新后核对");
+      DatasetSchema schema=DatasetSchema.get(current.dataset());Map<String,String> values=new LinkedHashMap<>();boolean changed=false;
+      for(var field:schema.fields)if(field.editable()){
+        String value=proposed==null?null:proposed.get(field.key());if(value==null)throw error(Code.INVALID_INPUT,"填写字段缺失，请刷新页面");
+        schema.validateEdit(schema.index(field.key()),value);values.put(field.key(),value);
+        String before=previous.change().values().getOrDefault(field.key(),schema.value(current.values(),schema.index(field.key())));
+        if(!value.equals(before))changed=true;
+      }
+      if(proposed.size()!=values.size())throw error(Code.INVALID_INPUT,"提交包含非填报字段");
+      if(!changed)throw error(Code.INVALID_INPUT,"内容未变化，可直接点击复核通过");
+      RecordChange change=new RecordChange(recordId,expectedVersion,Map.copyOf(values));
+      List<String> division=divisionAdmins();if(division.isEmpty())throw error(Code.NO_REVIEWER,"没有有效分行管理员，本次未提交");
+      SnapshotRow revised=new SnapshotRow(current,change);String nextId=id(),at=now();
+      String handoff="支行复核员修改后重新提交分行；新提交单 "+nextId;
+      exec("UPDATE submission_items SET workflow_state='RETURNED' WHERE submission_id=? AND record_id=?",submissionId,recordId);
+      exec("DELETE FROM pending_submission_records WHERE owner_id=? AND record_id=? AND submission_id=?",old.ownerId(),recordId,submissionId);
+      exec("INSERT INTO workflow_item_events VALUES(?,?,?,?,?,?,?,?,?,?,?)",id(),submissionId,recordId,RowStage.RETURNED.name(),"BRANCH_REVISED",a.userId(),a.name(),a.role().name(),requestId,handoff,at);
+      exec("UPDATE submissions SET state=?,reviewer_id=?,reviewer_name=?,decided_at=?,decision_reason=? WHERE id=?",aggregateState(submissionId).name(),a.userId(),a.name(),at,handoff,submissionId);
+      exec("INSERT INTO submissions(id,owner_id,organization_id,dataset,state,payload,created_at,reviewer_id,decided_at,decision_reason,mode,owner_name,reviewer_name,draft_id,draft_revision,prior_submission_id,preview_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        nextId,a.userId(),old.organizationId(),old.dataset(),State.PENDING_DIVISION.name(),encode(List.of(revised)),at,null,null,"",Mode.DIRECT.name(),a.name(),"","",0,submissionId,null);
+      exec("INSERT INTO submission_items(submission_id,record_id,period_start,period_end,workflow_state) VALUES(?,?,?,?,?)",nextId,recordId,java.sql.Date.valueOf(current.period().start()),java.sql.Date.valueOf(current.period().end()),RowStage.DIVISION_REVIEW.name());
+      setWorkflowState(a,nextId,recordId,a.userId(),RowStage.DIVISION_REVIEW,"","DIRECT_SENT_TO_DIVISION",requestId,at);
+      linkAudits(submissionId,List.of(audit(a,current.organizationId(),recordId,"BRANCH_REVISED",requestId,"","",handoff)));
+      linkAudits(nextId,List.of(audit(a,current.organizationId(),recordId,"DIRECT_SENT_TO_DIVISION",requestId,"",WorkflowCodec.changes(List.of(change)),"分行退回后由支行复核员修改提议；正式值未变")));
+      checkpoint.accept("reviewer-revision-written");
+      emit("DIVISION_REVIEW_REQUIRED",current.organizationId(),"复核员修改后待分行终审",summary(a,current.dataset(),1),nextId,division,"reviewer-revise-"+nextId);
+      remember(a,requestId,hash,nextId);checkpoint.accept("reviewer-revision-complete");return loadSubmission(a,nextId);
+    });
+  }
   @Override public String reopenCompleted(ActorContext a,String recordId,long expectedVersion,String reason,String requestId) {
     return call(a,()->{
       AccessPolicy.require(a,AccessPolicy.Action.DIVISION_REVIEW,Organizations.DIVISION);
@@ -536,7 +588,7 @@ final class WorkflowEngine implements WorkflowService, NotificationService {
   private boolean visibleBusinessRow(ActorContext a,String recordId) {
     if(AccessPolicy.all(a))return true;
     try {BusinessRecord current=store.find(a,recordId);RowStage stage=current.workflowStage();
-      return stage!=RowStage.DIVISION_REVIEW&&(!Set.of(RowStage.PUBLISHED,RowStage.LEGACY_PUBLISHED).contains(stage)||!store.completionRules().visible(a).get(current.dataset()).complete(current.values()));
+      return stage!=RowStage.DIVISION_REVIEW&&!(a.role()==Role.OPERATOR&&stage==RowStage.BRANCH_REVIEW)&&(!Set.of(RowStage.PUBLISHED,RowStage.LEGACY_PUBLISHED).contains(stage)||!store.completionRules().visible(a).get(current.dataset()).complete(current.values()));
     } catch(IllegalArgumentException|SecurityException e){return false;}
   }
   private static List<SnapshotRow> selectedRows(Submission submission,List<String> requested) {

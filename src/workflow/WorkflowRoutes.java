@@ -26,8 +26,8 @@ final class WorkflowRoutes {
 
   boolean get(HttpExchange x,AuthService.Session session,Map<String,String> query)throws Exception {
     String path=x.getRequestURI().getPath();
-    if(!Set.of("/workflow","/workflow/drafts","/workflow/edit","/workflow/preview","/workflow/submissions","/workflow/reviews","/workflow/submission","/workflow/record-history","/workflow/reopen","/workflow/reconfirm").contains(path))return false;
-    WorkflowPages pages=pages(session);
+    if(!Set.of("/workflow","/workflow/drafts","/workflow/edit","/workflow/preview","/workflow/submissions","/workflow/reviews","/workflow/submission","/workflow/review/edit","/workflow/record-history","/workflow/reopen","/workflow/reconfirm").contains(path))return false;
+    WorkflowPages pages=pages(session).returnTo(safeReturn(query.get("return")));
     try {
       switch(path) {
         case "/workflow" -> send(x,200,home(pages,session,query));
@@ -38,10 +38,22 @@ final class WorkflowRoutes {
           send(x,200,pages.drafts(workflow.drafts(session.actor,empty(dataset),(page-1)*LIST_PAGE_SIZE,LIST_PAGE_SIZE),dataset,page));
         }
         case "/workflow/edit" -> send(x,200,editor(pages,session,query));
-        case "/workflow/preview" -> send(x,200,pages.preview(workflow.preview(session.actor,required(query,"id")),notice(query)));
+        case "/workflow/preview" -> {Preview preview=workflow.preview(session.actor,required(query,"id"));rejectDivisionDirect(session.actor,preview);send(x,200,pages.preview(preview,notice(query)));}
         case "/workflow/submissions" -> send(x,200,submissions(pages,session,query,false));
         case "/workflow/reviews" -> send(x,200,submissions(pages,session,query,true));
-        case "/workflow/submission" -> send(x,200,pages.submission(workflow.submission(session.actor,required(query,"id")),notice(query)));
+        case "/workflow/submission" -> {
+          Submission submission=workflow.submission(session.actor,required(query,"id"));
+          Set<String> revisable=session.actor.role()==Role.REVIEWER?workflow.branchRevisionRows(session.actor,submission.id()):Set.of();
+          send(x,200,pages.submission(submission,notice(query),revisable));
+        }
+        case "/workflow/review/edit" -> {
+          if(session.actor.role()!=Role.REVIEWER)throw new SecurityException("只有支行复核员可以修改分行退回的行");
+          Submission submission=workflow.submission(session.actor,required(query,"id"));String recordId=required(query,"record");
+          if(!workflow.branchRevisionRows(session.actor,submission.id()).contains(recordId))throw new SecurityException("当前行没有分行退回的可修改任务");
+          SnapshotRow row=submission.rows().stream().filter(item->item.before().id().equals(recordId)).findFirst().orElseThrow(()->new SecurityException("记录不存在或无权访问"));
+          String back="/workflow/submission?id="+HttpSupport.url(submission.id());String origin=safeReturn(query.get("return"));if(!origin.isEmpty())back+="&return="+HttpSupport.url(origin);
+          pages.returnTo(back);send(x,200,pages.reviewEdit(submission,row,store.find(session.actor,recordId)));
+        }
         case "/workflow/record-history" -> {
           BusinessRecord row=store.find(session.actor,required(query,"record"));
           send(x,200,pages.recordHistory(row,workflow.recordEvents(session.actor,row.id(),0,100),workflow.recordHistory(session.actor,row.id(),0,50)));
@@ -58,7 +70,7 @@ final class WorkflowRoutes {
 
   boolean post(HttpExchange x,AuthService.Session session,Map<String,String> form)throws Exception {
     String path=x.getRequestURI().getPath();
-    if(!Set.of("/workflow/draft/save","/workflow/direct/preview","/workflow/confirm","/workflow/review/approve","/workflow/review/reject","/workflow/reopen","/workflow/reconfirm","/workflow/returned/restore").contains(path))return false;
+    if(!Set.of("/workflow/draft/save","/workflow/direct/preview","/workflow/confirm","/workflow/review/approve","/workflow/review/reject","/workflow/review/revise","/workflow/reopen","/workflow/reconfirm","/workflow/returned/restore").contains(path))return false;
     WorkflowPages pages=pages(session);
     try {
       switch(path) {
@@ -74,7 +86,9 @@ final class WorkflowRoutes {
           HttpSupport.redirect(x,"/workflow/edit?dataset="+HttpSupport.url(draft.dataset())+"&draft="+HttpSupport.url(draft.id()));
         }
         case "/workflow/confirm" -> {
-          Submission result=workflow.confirm(session.actor,required(form,"previewId"),required(form,"requestId"));
+          if(session.actor.role()==Role.DIVISION_ADMIN)throw new SecurityException("分行管理员不能直接修改业务值，请通过退回修改交由支行填报");
+          String previewId=required(form,"previewId");
+          Submission result=workflow.confirm(session.actor,previewId,required(form,"requestId"));
           send(x,200,pages.submission(result,"提交已确认；请以当前单据状态为准。"));
         }
         case "/workflow/review/approve" -> {
@@ -94,6 +108,15 @@ final class WorkflowRoutes {
             Submission result=workflow.rejectRows(session.actor,submissionId,ids,form.get("reason"),requestId);
             send(x,200,pages.submission(result,session.actor.role()==Role.DIVISION_ADMIN?"已退回对应支行复核员处理；正式值尚未改变。":"已退回对应操作员修改；正式值尚未改变。"));
           }
+        }
+        case "/workflow/review/revise" -> {
+          if(session.actor.role()!=Role.REVIEWER)throw new SecurityException("只有支行复核员可以修改分行退回的行");
+          if(!"yes".equals(form.get("confirm")))throw new IllegalArgumentException("请确认修改内容并提交分行终审");
+          String submissionId=required(form,"submissionId"),recordId=required(form,"recordId");BusinessRecord current=store.find(session.actor,recordId);
+          DatasetSchema schema=DatasetSchema.get(current.dataset());Map<String,String> proposed=new LinkedHashMap<>();
+          for(var field:schema.fields)if(field.editable())proposed.put(field.key(),requiredField(form,"value_"+field.key()));
+          workflow.reviseForDivision(session.actor,submissionId,recordId,number(form.get("expectedVersion"),"记录版本"),proposed,required(form,"requestId"));
+          HttpSupport.redirect(x,"/workflow/reviews?notice="+HttpSupport.url("已修改并送分行终审；正式值尚未改变。"));
         }
         case "/workflow/reopen" -> {
           AccessPolicy.require(session.actor,AccessPolicy.Action.DIVISION_REVIEW,Organizations.DIVISION);
@@ -259,12 +282,16 @@ final class WorkflowRoutes {
   }
 
   private static boolean canDirect(ActorContext actor) {
-    return actor.role()==Role.DIVISION_ADMIN||actor.role()==Role.BRANCH_ADMIN||actor.role()==Role.REVIEWER;
+    return actor.role()==Role.BRANCH_ADMIN||actor.role()==Role.REVIEWER;
+  }
+
+  private static void rejectDivisionDirect(ActorContext actor,Preview preview) {
+    if(actor.role()==Role.DIVISION_ADMIN&&(preview.mode()==Mode.DIRECT||preview.mode()==Mode.BATCH_DIRECT))throw new SecurityException("分行管理员不能直接修改业务值，请通过退回修改交由支行填报");
   }
 
   private boolean canEditStage(ActorContext actor,BusinessRecord row) {
     RowStage stage=row.workflowStage();if(stage==RowStage.BRANCH_REVIEW||stage==RowStage.DIVISION_REVIEW)return false;
-    if(actor.role()==Role.DIVISION_ADMIN)return true;
+    if(actor.role()==Role.DIVISION_ADMIN)return false;
     if(actor.role()==Role.OPERATOR||actor.role()==Role.BRANCH_ADMIN||actor.role()==Role.REVIEWER) {
       if(stage==RowStage.READY||stage==RowStage.RETURNED)return true;
       if(stage==RowStage.PUBLISHED||stage==RowStage.LEGACY_PUBLISHED)return !store.completionRules().visible(actor).get(row.dataset()).complete(row.values());
@@ -287,8 +314,13 @@ final class WorkflowRoutes {
   private static int bounded(String value,int minimum,int maximum,String label) {int n=HttpSupport.integer(value,-1);if(n<minimum||n>maximum)throw new IllegalArgumentException(label+"无效");return n;}
   private static long number(String value,String label) {try{return Long.parseLong(value);}catch(Exception e){throw new IllegalArgumentException(label+"无效，请刷新后重试");}}
   private static String required(Map<String,String> values,String key) {String value=clean(values.get(key));if(value.isEmpty())throw new IllegalArgumentException("缺少必要参数，请刷新后重试");return value;}
+  private static String requiredField(Map<String,String> values,String key) {String value=values.get(key);if(value==null)throw new IllegalArgumentException("页面字段缺失，请刷新后重试");return value;}
   private static List<String> recordIds(String value){List<String> ids=Arrays.stream(value.split(",",-1)).map(String::strip).toList();if(ids.stream().anyMatch(String::isEmpty))throw new IllegalArgumentException("审核记录范围无效，请刷新页面后重新选择");return ids;}
   private static String clean(String value) {return value==null?"":value.strip();}
+  private static String safeReturn(String value) {
+    String target=clean(value);if(target.length()>2048||target.indexOf('\\')>=0||target.indexOf('#')>=0||target.chars().anyMatch(c->c<32))return "";
+    String path=target.split("\\?",2)[0];return Set.of("/","/details","/branch","/progress").contains(path)?target:"";
+  }
   private static String empty(String value) {return value==null||value.isEmpty()?null:value;}
   private static String notice(Map<String,String> values) {return HttpSupport.limit(values.get("notice"),300);}
 

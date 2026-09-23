@@ -39,7 +39,7 @@ final class DashboardData {
   List<RowRef> filtered(String dataset,String q,String branch,String completion){
     String status=BusinessFilter.completion(completion);
     List<RowRef> result=new ArrayList<>();DatasetSchema s=DatasetSchema.get(dataset);String needle=q==null?"":q.strip().toLowerCase(Locale.ROOT);
-    for(RowRef ref:rows(dataset)){if(actor!=null&&!AccessPolicy.all(actor)&&!ref.visiblePending())continue;if(branch!=null&&!branch.isBlank()&&!branch.equals(s.value(ref.values,s.branchColumn)))continue;
+    for(RowRef ref:rows(dataset)){if(actor!=null&&!AccessPolicy.all(actor)&&!ref.visiblePending())continue;if(actor!=null&&actor.role()==Role.OPERATOR&&ref.record.workflowStage==RowStage.BRANCH_REVIEW)continue;if(branch!=null&&!branch.isBlank()&&!branch.equals(s.value(ref.values,s.branchColumn)))continue;
       if(status.equals("complete")&&!ref.complete()||status.equals("incomplete")&&ref.complete())continue;
       if(status.equals("overdue")&&!ref.overdue())continue;
       if(needle.isEmpty()||ref.values.stream().anyMatch(v->v.toLowerCase(Locale.ROOT).contains(needle)))result.add(ref);

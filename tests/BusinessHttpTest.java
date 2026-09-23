@@ -16,7 +16,7 @@ final class BusinessHttpTest {
     List<byte[]> pageFiles=List.of(multiRowsWorkbook());List<String> pageNames=List.of("b2-page-rows.xlsx");
     var pageUpload=ImportHttpTest.upload(pageFiles,pageNames,csrf());var pageConfirm=HttpSmokeTest.hidden(pageUpload.body());pageConfirm.put("csrf",csrf());pageConfirm.put("mode","saved");var pageCommit=post("/imports/confirm",pageConfirm);check(pageUpload.statusCode()==200&&pageCommit.statusCode()==303,"synthetic multi-row page fixture committed upload="+pageUpload.statusCode()+" commit="+pageCommit.statusCode()+" body="+pageUpload.body().substring(0,Math.min(180,pageUpload.body().length())));
     String ownId=recordId(get("/details?dataset=multi&month=2026-09&q=B2-HTTP-FOCUS").body());String foreignId=recordId(get("/details?dataset=multi&month=2026-09&q=B2-HTTP-FOREIGN").body());
-    use(division);String adminPage=get("/details?dataset=multi&month=2026-09&q=B2-HTTP-PAGE&pageSize=10").body();check(adminPage.contains("/assets/workflow.js")&&adminPage.contains("class=\"workflow-edit-form\"")&&adminPage.contains("action=\"/update-batch\""),"unified direct-edit table loads workflow guard");
+    use(division);String adminPage=get("/details?dataset=multi&month=2026-09&q=B2-HTTP-PAGE&pageSize=10").body();check(!adminPage.contains("action=\"/update-batch\"")&&!adminPage.contains("保存资料补充")&&adminPage.contains("查看历史修改记录"),"division detail remains read-only with row-level history: edit="+adminPage.contains("action=\"/update-batch\"")+" save="+adminPage.contains("保存资料补充")+" history="+adminPage.contains("查看历史修改记录"));
     use(operator);String url="/details?dataset=multi&scope=quarter&year=2026&quarter=3&q=B2-HTTP-FOCUS&completion=incomplete";String list=get(url).body();
     check(list.contains("/workflow/draft/save")&&list.contains("value=\""+ownId+"\"")&&!list.contains("B2-HTTP-FOREIGN")&&!list.contains("business-row-ref"),"scoped real in-table editor without per-row action markers");
     check(get("/assets/business.css").statusCode()==200,"local B2 styles available");check(get("/details?completion=invalid").statusCode()==400,"unknown completion filter fails closed");
@@ -40,10 +40,11 @@ final class BusinessHttpTest {
     use(root);check(!get(url).body().contains("我的草稿")&&!get(url).body().contains(draftId),"super cannot inspect private draft metadata");
     use(operator);form=WorkflowIntegrationHttpTest.form(draftPage,"/workflow/draft/save");form.put("intent","preview");var preview=post("/workflow/draft/save",form);check(preview.statusCode()==200,"B1 server diff still works from B2 action");
     var submitted=post("/workflow/confirm",HttpSmokeTest.hidden(preview.body()));check(submitted.statusCode()==200,"focused submission confirmed");
-    list=get(url).body();check(list.contains("待支行复核")&&!list.contains("class=\"business-badge draft\"")&&!list.contains("B2-HTTP-PRIVATE"),"branch-review row is read-only and does not reveal snapshot or private draft");
-    check(exportCount("incomplete")==1&&exportCount("complete")==0,"pending excluded from completed XLSX");
-    String trace=get("/records/history?id="+ownId).body();check(trace.contains("/audit?submissionId=")&&trace.contains("待复核"),"record history links pending submission to shared audit");
+    list=get(url).body();check(!list.contains("虚构测试企业 B2-HTTP-FOCUS")&&!list.contains("B2-HTTP-PRIVATE"),"operator cannot see rows while branch reviewer holds the task");
+    check(exportCount("incomplete")==0&&exportCount("complete")==0,"operator export excludes a row held for branch review");
+    check(get("/records/history?id="+ownId).statusCode()==403,"operator cannot use row history to bypass branch-review visibility");
     use(reviewer);String reviewerList=get(url).body();check(reviewerList.contains("去复核"),"reviewer can follow exact submission");
+    String reviewerHome=get("/?month=2026-09").body();String homeReviewLink=WorkflowIntegrationHttpTest.unescape(WorkflowIntegrationHttpTest.match(reviewerHome,"href=\"(/workflow/submission\\?id=[^\"]+return=[^\"]+)\""));String fromHome=get(homeReviewLink).body();check(fromHome.contains("data-back=\"fixed\" href=\"/?"),"homepage review opens with an exact homepage return target");
     Matcher m=Pattern.compile("/workflow/submission\\?id=([^\"&]+)").matcher(reviewerList);if(!m.find())throw new AssertionError("no pending link");String submissionId=m.group(1);
     var decision=WorkflowIntegrationHttpTest.formLast(get("/workflow/submission?id="+submissionId).body(),"/workflow/review/approve");check(post("/workflow/review/approve",decision).statusCode()==200,"branch review advances to division without publishing");
     use(operator);check(!get(url).body().contains("B2-HTTP-PRIVATE"),"division-pending content remains absent from branch detail");
@@ -67,7 +68,7 @@ final class BusinessHttpTest {
     use(branch);check(!get("/details?dataset=multi&month=2026-09&q=B2-HTTP-FOCUS").body().contains("虚构测试企业 B2-HTTP-FOCUS"),"row leaves branch queue again after republication");
     System.out.println("BUSINESS_HTTP_OK assertions="+assertions+" A2 import to B2 focus/draft/review/list/audit/export/clear, real Main");
   }
-  static String recordId(String html){String id=HttpSmokeTest.hidden(html).get("id0");if(id==null)throw new AssertionError("no formal record");return id;}
+  static String recordId(String html){String id=HttpSmokeTest.hidden(html).get("id0");if(id==null){Matcher m=Pattern.compile("/workflow/record-history\\?record=([^&\"]+)").matcher(html);if(m.find())id=m.group(1);}if(id==null)throw new AssertionError("no formal record");return id;}
   static byte[] multiRowsWorkbook()throws Exception{DatasetSchema schema=DatasetSchema.get("multi");try(Workbook wb=WorkbookFactory.create(new ByteArrayInputStream(new ExcelExporter().template("multi")))){Sheet sheet=wb.getSheet(schema.label);for(int i=0;i<25;i++){Row row=sheet.createRow(schema.headerRows+i);List<String> values=FoundationTest.candidate("multi","WUJIN","B2-HTTP-PAGE-"+i).values();for(int c=0;c<values.size();c++)row.createCell(c).setCellValue(values.get(c));}ByteArrayOutputStream out=new ByteArrayOutputStream();wb.write(out);return out.toByteArray();}}
   static int exportCount(String completion)throws Exception{
     var response=HttpSmokeTest.client.send(HttpRequest.newBuilder(URI.create(HttpSmokeTest.base+"/export?dataset=multi&scope=quarter&year=2026&quarter=3&q=B2-HTTP-FOCUS&completion="+completion)).GET().build(),HttpResponse.BodyHandlers.ofByteArray());check(response.statusCode()==200,"authorized export endpoint");

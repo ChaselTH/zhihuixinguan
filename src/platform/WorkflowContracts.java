@@ -95,6 +95,8 @@ public final class WorkflowContracts {
     List<Submission> submissions(ActorContext actor, Query query);
     List<Submission> pendingReviews(ActorContext actor, Query query);
     List<Submission> pendingDivisionReviews(ActorContext actor, Query query);
+    /** Only the caller's branch-review rows that were returned by division are revisable. */
+    Set<String> branchRevisionRows(ActorContext actor, String submissionId);
     List<Submission> recordHistory(ActorContext actor, String recordId, int offset, int limit);
     /** Row-level operation timeline (submitted/reviewed/returned/published) with the operator name. */
     List<ItemEvent> recordEvents(ActorContext actor, String recordId, int offset, int limit);
@@ -103,6 +105,8 @@ public final class WorkflowContracts {
     Submission reject(ActorContext actor, String submissionId, String reason, String requestId);
     Submission approveRows(ActorContext actor, String submissionId, List<String> recordIds, String requestId);
     Submission rejectRows(ActorContext actor, String submissionId, List<String> recordIds, String reason, String requestId);
+    /** Reviewer replaces one division-returned proposal with a new immutable submission for final review. */
+    Submission reviseForDivision(ActorContext actor, String submissionId, String recordId, long expectedVersion, Map<String,String> proposed, String requestId);
     /** Reopens one completed official row without changing its published values/version. */
     String reopenCompleted(ActorContext actor, String recordId, long expectedVersion, String reason, String requestId);
   }

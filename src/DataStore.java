@@ -43,7 +43,7 @@ final class DataStore implements AutoCloseable {
   boolean businessVisible(ActorContext actor,BusinessRecord row){
     if(AccessPolicy.all(actor))return true;
     var rule=platform.completionRules().visible(actor).get(row.dataset());
-    return row.workflowStage()==xinguan.platform.WorkflowContracts.RowStage.READY||row.workflowStage()==xinguan.platform.WorkflowContracts.RowStage.RETURNED||row.workflowStage()==xinguan.platform.WorkflowContracts.RowStage.BRANCH_REVIEW||
+    return row.workflowStage()==xinguan.platform.WorkflowContracts.RowStage.READY||row.workflowStage()==xinguan.platform.WorkflowContracts.RowStage.RETURNED||(actor.role()!=xinguan.platform.Role.OPERATOR&&row.workflowStage()==xinguan.platform.WorkflowContracts.RowStage.BRANCH_REVIEW)||
       (row.workflowStage()==xinguan.platform.WorkflowContracts.RowStage.PUBLISHED||row.workflowStage()==xinguan.platform.WorkflowContracts.RowStage.LEGACY_PUBLISHED)&&!rule.complete(row.values());
   }
   private void migrate()throws Exception {

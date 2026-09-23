@@ -295,7 +295,7 @@ public final class WorkflowPlatformTest {
   static void restart(Fixture f)throws Exception {
     var r=f.record("WUJIN","negative");var d=f.save(f.op,r,"restart content");var p=f.w().previewDraft(f.op,d.id(),1);String request=id();
     var s=f.w().confirm(f.op,p.id(),request);var n=f.n().inbox(f.review,false,0,100).stream().filter(x->x.submissionId().equals(s.id())).findFirst().orElseThrow();f.n().markRead(f.review,n.id());
-    f.reopen();check(f.w().draft(f.op,d.id()).rows().get(0).change().values().get("feedback").equals("restart content"),"draft survives restart");
+    f.reopen();check(f.w().draft(f.op,d.id()).rows().isEmpty(),"submitted operator row stays hidden while branch reviewer holds it after restart");
     check(f.w().submission(f.review,s.id()).state()==State.SUBMITTED,"pending survives restart");
     check(f.n().inbox(f.review,false,0,100).stream().filter(x->x.id().equals(n.id())).findFirst().orElseThrow().readAt()!=null,"read receipt survives restart");
     check(f.w().confirm(f.op,p.id(),request).id().equals(s.id()),"confirmation retry after restart");

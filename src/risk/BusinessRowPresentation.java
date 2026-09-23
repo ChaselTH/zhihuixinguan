@@ -22,19 +22,19 @@ final class BusinessRowPresentation extends PageLayout {
     Submission latest=state.pending()!=null?state.pending():state.latest();
     // Reviewers and division administrators get a single "去复核" entry from actions(); only the
     // roles that cannot review keep the submission receipt link here so each row has one link.
-    if(!canReview()&&latest!=null&&(row.record.workflowStage==RowStage.BRANCH_REVIEW||row.record.workflowStage==RowStage.DIVISION_REVIEW||row.record.workflowStage==RowStage.RETURNED))b.append("<a class=\"business-badge history\" href=\"/workflow/submission?id=").append(u(latest.id())).append("\">查看提交回执").append(row.record.workflowStage==RowStage.RETURNED&&!latest.reason().isBlank()?" · "+e(latest.reason()):"").append("</a>");
+    if(currentSession.actor.role()!=Role.OPERATOR&&!canReview()&&latest!=null&&(row.record.workflowStage==RowStage.BRANCH_REVIEW||row.record.workflowStage==RowStage.DIVISION_REVIEW||row.record.workflowStage==RowStage.RETURNED))b.append("<a class=\"business-badge history\" href=\"/workflow/submission?id=").append(u(latest.id())).append("\">查看提交回执</a>");
     return b.toString();
   }
   private static String stage(RowStage stage){return switch(stage){case READY->"待支行处理";case BRANCH_REVIEW->"待支行复核 · 只读";case DIVISION_REVIEW->"待分行终审";case RETURNED->"退回待修改";case PUBLISHED->"终审已发布";case LEGACY_PUBLISHED->"";};}
-  String actions(RowRef row,BusinessWorkflowState states,RangeSelection range){
+  String actions(RowRef row,BusinessWorkflowState states,RangeSelection range,String source){
     StringBuilder b=new StringBuilder();var state=states.get(row.record.id);var actor=currentSession.actor;
     // Editing and trace are now page-level actions. Reviewers and division administrators share a
     // single "去复核" entry; this never exposes another branch's row or private draft contents.
     boolean actionable=actor.role()==Role.REVIEWER&&row.record.workflowStage==RowStage.BRANCH_REVIEW||actor.role()==Role.DIVISION_ADMIN&&row.record.workflowStage==RowStage.DIVISION_REVIEW;
-    if(actionable&&state.pending()!=null)b.append("<a class=\"btn btn-primary\" href=\"/workflow/submission?id=").append(u(state.pending().id())).append("\">去复核</a>");
-    if(actor.role()==Role.DIVISION_ADMIN&&(row.record.workflowStage==RowStage.PUBLISHED||row.record.workflowStage==RowStage.LEGACY_PUBLISHED)&&row.complete())b.append("<a class=\"btn btn-light\" href=\"/workflow/reopen?record=").append(u(row.record.id)).append("\">终审退回修改</a>");
-    if(actor.role()!=Role.SUPER_ADMIN&&row.record.workflowStage==RowStage.RETURNED)b.append("<a class=\"btn btn-light\" href=\"/workflow/reconfirm?record=").append(u(row.record.id)).append("\">核对后原值重提</a>");
-    if(actor.role()==Role.REVIEWER||actor.role()==Role.BRANCH_ADMIN||actor.role()==Role.DIVISION_ADMIN)b.append("<a class=\"btn btn-light\" href=\"/workflow/record-history?record=").append(u(row.record.id)).append("\">查看历史修改记录</a>");
+    if(actionable&&state.pending()!=null)b.append("<a class=\"btn btn-primary\" href=\"/workflow/submission?id=").append(u(state.pending().id())).append("&amp;return=").append(u(source)).append("\">去复核</a>");
+    if(actor.role()==Role.DIVISION_ADMIN&&(row.record.workflowStage==RowStage.PUBLISHED||row.record.workflowStage==RowStage.LEGACY_PUBLISHED)&&row.complete())b.append("<a class=\"btn btn-light\" href=\"/workflow/reopen?record=").append(u(row.record.id)).append("&amp;return=").append(u(source)).append("\">终审退回修改</a>");
+    if((actor.role()==Role.BRANCH_ADMIN||actor.role()==Role.REVIEWER)&&row.record.workflowStage==RowStage.RETURNED)b.append("<a class=\"btn btn-light\" href=\"/workflow/reconfirm?record=").append(u(row.record.id)).append("&amp;return=").append(u(source)).append("\">核对后原值重提</a>");
+    if(actor.role()==Role.REVIEWER||actor.role()==Role.BRANCH_ADMIN||actor.role()==Role.DIVISION_ADMIN)b.append("<a class=\"btn btn-light\" href=\"/workflow/record-history?record=").append(u(row.record.id)).append("&amp;return=").append(u(source)).append("\">查看历史修改记录</a>");
     return b.toString();
   }
 }

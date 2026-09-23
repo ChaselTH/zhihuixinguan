@@ -41,8 +41,9 @@ public final class Feedback009ReviewTest {
     f.w().approveRows(f.review,s.id(),List.of(a.id()),id());
     for(var actor:List.of(f.op,f.branch,f.review)){
       var receipt=f.w().submission(actor,s.id());
-      verify(receipt.rows().size()==1&&receipt.rows().get(0).before().id().equals(b.id()),"mixed receipt leaks hidden division row");
-      verify(f.w().submissions(actor,Query.firstPage()).get(0).rows().size()==1,"submission list leaks hidden row");
+      int expected=actor.role()==Role.OPERATOR?0:1;
+      verify(receipt.rows().size()==expected&&(expected==0||receipt.rows().get(0).before().id().equals(b.id())),"mixed receipt leaks hidden division or branch-review row");
+      verify(f.w().submissions(actor,Query.firstPage()).get(0).rows().size()==expected,"submission list leaks hidden workflow row");
       verify(f.w().recordHistory(actor,a.id(),0,10).stream().flatMap(h->h.rows().stream()).noneMatch(r->r.before().id().equals(a.id())),"history leaks hidden row");
     }
     f.w().approveRows(f.div,s.id(),List.of(a.id()),id());

@@ -44,7 +44,8 @@ final class WorkflowIntegrationHttpTest {
     var rejection=form(get("/workflow/submission?id="+first).body(),"/workflow/review/reject");rejection.put("reason","");var reasonPage=post("/workflow/review/reject",rejection);check(reasonPage.statusCode()==200&&reasonPage.body().contains("填写退回原因")&&reasonPage.body().contains("name=\"reason\"")&&!exportText("negative").contains("INTEGRATION_DRAFT_ONLY"),"missing popup reason opens a safe editable reason page without changing official data");
     rejection.put("reason","补充 <核验> 内容");check(post("/workflow/review/reject",rejection).statusCode()==200,"reviewer returns through Main");
     check(!exportText("negative").contains("INTEGRATION_DRAFT_ONLY"),"returned snapshot excluded from export");
-    use(operator);String returned=get("/workflow/submission?id="+first).body();String resume=unescape(match(returned,"href=\"([^\"]+)\">恢复草稿并修订"));
+    use(operator);String returnedDetails=get("/details?dataset=negative&month=2026-09").body();check(returnedDetails.contains("INTEGRATION_DRAFT_ONLY &lt;script&gt;草稿&lt;/script&gt;")&&returnedDetails.contains("补充 &lt;核验&gt; 内容")&&!returnedDetails.contains("查看提交回执")&&!returnedDetails.contains("核对后原值重提"),"returned operator row keeps prior proposal and shows the reason without receipt/reconfirm controls");
+    String returned=get("/workflow/submission?id="+first).body();String resume=unescape(match(returned,"href=\"([^\"]+)\">恢复草稿并修订"));
     String resumed=get(resume).body();check(resumed.contains("name=\"priorSubmissionId\" value=\""+first+"\""),"difference editor retains returned submission lineage");
     fields=form(resumed,"/workflow/draft/save");fields.put("value_0_feedback","INTEGRATION_APPROVED <核验完成>");fields.put("intent","preview");
     String preview2=post("/workflow/draft/save",fields).body();String second=id(post("/workflow/confirm",form(preview2,"/workflow/confirm")).body());
@@ -58,18 +59,16 @@ final class WorkflowIntegrationHttpTest {
     check(get("/audit?submissionId="+UUID.randomUUID()).statusCode()==403,"unknown audit submission is indistinguishable from unauthorized, never unfiltered data");
     use(root);check(get("/workflow/submission?id="+second).statusCode()==200&&get("/audit?submissionId="+second).statusCode()==200,"super authorized read-only cross-module trace");
     check(post("/workflow/review/approve",Map.of("csrf",csrf(),"submissionId",second,"requestId",UUID.randomUUID().toString())).statusCode()==403,"super cannot approve workflow");
-    int n=0;for(HttpClient direct:List.of(division,branch,reviewer)) {
-      if(direct!=division){use(division);String baseKey="INTEGRATION_DIRECT_BASE_"+(n+1);var baseUpload=HttpSmokeTest.upload("multi",HttpSmokeTest.workbook("multi","WUJIN",baseKey),csrf());check(baseUpload.statusCode()==200&&post("/imports/confirm",Map.of("csrf",csrf(),"token",HttpSmokeTest.hidden(baseUpload.body()).get("token"),"mode","preserve")).statusCode()==303,"seed independent unfinished row for direct role");}
+    use(division);check(get("/workflow/edit?dataset=multi&organization=WUJIN&from=2026-09-01&through=2026-09-30").statusCode()==403,"division has no direct editor");
+    int n=0;for(HttpClient direct:List.of(branch,reviewer)) {
+      use(division);String baseKey="INTEGRATION_DIRECT_BASE_"+(n+1);var baseUpload=HttpSmokeTest.upload("multi",HttpSmokeTest.workbook("multi","WUJIN",baseKey),csrf());check(baseUpload.statusCode()==200&&post("/imports/confirm",Map.of("csrf",csrf(),"token",HttpSmokeTest.hidden(baseUpload.body()).get("token"),"mode","preserve")).statusCode()==303,"seed independent unfinished row for direct role");
       use(direct);fields=edit("multi");String marker="INTEGRATION_DIRECT_"+(++n);fields.put("value_0_feedback",marker);
       var directPreview=post("/workflow/direct/preview",fields);check(directPreview.statusCode()==200&&!exportText("multi").contains(marker),"direct role preview does not publish");
       var confirmation=post("/workflow/confirm",form(directPreview.body(),"/workflow/confirm"));
       check(confirmation.statusCode()==200,"direct role confirms server snapshot");
-      if(direct==division)check(exportText("multi").contains(marker),"division admin confirmation publishes directly");
-      else {
-        check(!exportText("multi").contains(marker),"branch edits wait for division approval");
-        use(division);String directSubmission=id(confirmation.body());var finalApproval=form(get("/workflow/submission?id="+directSubmission).body(),"/workflow/review/approve");
-        check(post("/workflow/review/approve",finalApproval).statusCode()==200&&exportText("multi").contains(marker),"division final approval publishes branch edits");
-      }
+      check(!exportText("multi").contains(marker),"branch edits wait for division approval");
+      use(division);String directSubmission=id(confirmation.body());var finalApproval=form(get("/workflow/submission?id="+directSubmission).body(),"/workflow/review/approve");
+      check(post("/workflow/review/approve",finalApproval).statusCode()==200&&exportText("multi").contains(marker),"division final approval publishes branch edits");
     }
     use(operator);fields=edit("cross");fields.put("value_0_cross_feedback","INTEGRATION_INTERNAL_APPROVED");fields.put("intent","preview");var internal=post("/workflow/draft/save",fields);String internalId=id(post("/workflow/confirm",form(internal.body(),"/workflow/confirm")).body());
     use(reviewer);check(post("/workflow/review/approve",form(get("/workflow/submission?id="+internalId).body(),"/workflow/review/approve")).statusCode()==200&&!exportText("cross").contains("INTEGRATION_INTERNAL_APPROVED"),"branch approval stages internal data for division");

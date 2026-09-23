@@ -9,6 +9,7 @@ public final class Feedback010ReviewTest {
   static int checks, failures;
   public static void main(String[] args)throws Exception {
     run("division return goes back to the approving branch reviewer",Feedback010ReviewTest::divisionReturnToReviewer);
+    run("reviewer revises a division-returned row without changing the original snapshot",Feedback010ReviewTest::reviewerRevision);
     run("notifications stay personal inside a branch",Feedback010ReviewTest::personalNotices);
     if(failures>0)throw new AssertionError("FEEDBACK010_REVIEW_FAILED cases="+failures);
     System.out.println("FEEDBACK010_REVIEW_OK checks="+checks);
@@ -47,5 +48,22 @@ public final class Feedback010ReviewTest {
     verify(f.n().unreadCount(f.otherOp)==otherBranchNotices,"other branch operator is not notified");
     verify(f.n().inbox(f.op,false,0,100).stream().allMatch(n->n.submissionId().isEmpty()||n.submissionId().equals(first.id())),"first operator inbox stays inside its own submission");
     verify(f.n().inbox(f.review2,false,0,100).stream().filter(n->!n.submissionId().isEmpty()).allMatch(n->n.submissionId().equals(first.id())||n.submissionId().equals(second.id())),"branch reviewer only receives own-branch submissions");
+  }}
+
+  static void reviewerRevision()throws Exception {try(var f=new Fixture()){
+    var row=f.record("WUJIN","multi");var original=f.pending(f.op,row,"INITIAL-PROPOSAL");
+    f.w().approve(f.review,original.id(),id());f.w().reject(f.div,original.id(),"请支行核对并修改",id());
+    verify(f.w().branchRevisionRows(f.review,original.id()).contains(row.id()),"returned row offers reviewer revision");
+    var source=f.w().submission(f.review,original.id()).rows().get(0);var schema=DatasetSchema.get("multi");Map<String,String> values=new LinkedHashMap<>();
+    for(var field:schema.fields)if(field.editable())values.put(field.key(),source.change().values().getOrDefault(field.key(),schema.value(source.before().values(),schema.index(field.key()))));
+    values.put("feedback","REVIEWER-REVISED");String request=id();long before=f.n().unreadCount(f.op);
+    var replacement=f.w().reviseForDivision(f.review,original.id(),row.id(),row.version(),values,request);
+    verify(replacement.state()==State.PENDING_DIVISION&&f.store.find(f.div,row.id()).workflowStage()==RowStage.DIVISION_REVIEW,"reviewer revision goes straight to division final review");
+    verify(f.w().submission(f.div,original.id()).rows().get(0).change().values().get("feedback").equals("INITIAL-PROPOSAL"),"original immutable proposal is unchanged");
+    verify(f.w().submission(f.div,original.id()).state()==State.RETURNED&&f.w().submission(f.div,replacement.id()).priorSubmissionId().equals(original.id()),"old and new submissions remain linked in history");
+    verify(f.w().reviseForDivision(f.review,original.id(),row.id(),row.version(),values,request).id().equals(replacement.id()),"same request id is idempotent");
+    verify(f.n().unreadCount(f.op)==before&&f.store.find(f.op,row.id()).values().equals(row.values()),"operator is not notified and official data does not change before final approval");
+    f.w().approve(f.div,replacement.id(),id());verify(WorkflowPlatformTest.value(f.store.find(f.div,row.id())).equals("REVIEWER-REVISED"),"division final review publishes reviewer revision");
+    verify(f.w().recordEvents(f.div,row.id(),0,50).stream().anyMatch(e->e.action().equals("BRANCH_REVISED")&&e.actorName().equals(f.review.name())),"row history names the revising reviewer");
   }}
 }

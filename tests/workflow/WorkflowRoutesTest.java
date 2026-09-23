@@ -78,7 +78,7 @@ public final class WorkflowRoutesTest {
     Submission submission=store.workflow().submissions(operator.actor(),new Query(null,null,null,null,null,true,0,20)).get(0);
     check(store.find(operator.actor(),first.id()).values().get(DatasetSchema.get("multi").index("feedback")).isBlank(),"draft and pending submission do not change official value");
     Draft latest=store.workflow().draft(operator.actor(),draft.id());Map<String,String> later=draftForm(operatorSession,first,"提交后的后续草稿",latest.id(),Long.toString(latest.version()),"","save",id());check(post(operatorSession,"/workflow/draft/save",later).status==409&&get(operatorSession,"/workflow/edit?dataset=multi&draft="+draft.id()).status==409,"submitted draft version is frozen and old editor link is safe");
-    check(after(store.workflow().submission(operator.actor(),submission.id()),first.id()).contains("<img"),"later draft edit cannot mutate submitted snapshot");
+    check(after(store.workflow().submission(reviewer.actor(),submission.id()),first.id()).contains("<img"),"later draft edit cannot mutate submitted snapshot");
 
     Exchange pending=get(reviewerSession,"/workflow/reviews");check(pending.status==200&&pending.body().contains(shortIdText(submission.id()))&&pending.body().contains("复核待办"),"reviewer sees own-branch pending queue");
     Exchange detail=get(reviewerSession,"/workflow/submission?id="+submission.id());check(detail.status==200&&detail.body().contains("/workflow/review/approve")&&detail.body().contains("/workflow/review/reject")&&detail.body().contains("approve-"+submission.id())&&detail.body().contains("reject-"+submission.id()),"reviewer sees whole-submission forms with stable action request ids");
@@ -93,6 +93,17 @@ public final class WorkflowRoutesTest {
     Map<String,String> divisionApproval=Map.of("submissionId",submission.id(),"recordIds",first.id(),"requestId",id(),"csrf",divisionSession.csrf);Exchange published=post(divisionSession,"/workflow/review/approve",divisionApproval);
     check(published.status==200&&published.body().contains("分行终审已通过")&&store.find(operator.actor(),first.id()).values().get(DatasetSchema.get("multi").index("feedback")).contains("<img"),"division approval publishes the immutable snapshot exactly once");
 
+    check(post(reviewerSession,"/workflow/review/approve",Map.of("submissionId",submission.id(),"recordIds",second.id(),"requestId",id(),"csrf",reviewerSession.csrf)).status==200,"second row can advance independently");
+    check(post(divisionSession,"/workflow/review/reject",Map.of("submissionId",submission.id(),"recordIds",second.id(),"reason","请复核员核对后修改","requestId",id(),"csrf",divisionSession.csrf)).status==200,"division returns second row to branch reviewer");
+    Exchange reviewerReturned=get(reviewerSession,"/workflow/submission?id="+submission.id());check(reviewerReturned.body().contains("自行修改后送分行"),"reviewer sees revision action after division return");
+    Exchange revisionPage=get(reviewerSession,"/workflow/review/edit?id="+submission.id()+"&record="+second.id());check(revisionPage.status==200&&revisionPage.body().contains("第二页虚构填写")&&revisionPage.body().contains("请复核员核对后修改"),"reviewer revision form retains previous proposal and division reason");
+    Map<String,String> revise=new HashMap<>(Map.of("csrf",reviewerSession.csrf,"submissionId",submission.id(),"recordId",second.id(),"expectedVersion",""+second.version(),"requestId",id(),"confirm","yes"));
+    var secondSchema=DatasetSchema.get("multi");for(var field:secondSchema.fields)if(field.editable())revise.put("value_"+field.key(),field.key().equals("feedback")?"支行复核员修改后重提":"");
+    check(post(reviewerSession,"/workflow/review/revise",revise).status==303,"reviewer can revise and resubmit directly to division");
+    Submission revised=store.workflow().pendingDivisionReviews(division.actor(),Query.firstPage()).stream().filter(s->s.priorSubmissionId().equals(submission.id())).findFirst().orElseThrow();
+    check(store.workflow().submission(division.actor(),submission.id()).rows().stream().filter(r->r.before().id().equals(second.id())).findFirst().orElseThrow().change().values().get("feedback").equals("第二页虚构填写"),"reviewer revision leaves original snapshot immutable");
+    check(post(divisionSession,"/workflow/review/approve",Map.of("submissionId",revised.id(),"recordIds",second.id(),"requestId",id(),"csrf",divisionSession.csrf)).status==200&&store.find(division.actor(),second.id()).values().get(secondSchema.index("feedback")).equals("支行复核员修改后重提"),"division publishes reviewer revision only after final approval");
+
     Submission returned=submit(operatorSession,third,"待退回内容","");String reason="请补充 <核验> 原因";
     Exchange returnedPage=post(reviewerSession,"/workflow/review/reject",Map.of("submissionId",returned.id(),"recordIds",third.id(),"requestId",id(),"reason",reason,"csrf",reviewerSession.csrf));check(returnedPage.status==200&&returnedPage.body().contains("请补充 &lt;核验&gt; 原因"),"required reject reason is escaped and persisted");
     Exchange ownerReturned=get(operatorSession,"/workflow/submission?id="+returned.id());check(ownerReturned.status==200&&ownerReturned.body().contains("恢复草稿并修订"),"returned owner receives draft revision link");
@@ -100,9 +111,10 @@ public final class WorkflowRoutesTest {
     Exchange rePreview=post(operatorSession,"/workflow/draft/save",resubmit);Submission resubmitted=confirm(operatorSession,hidden(rePreview.body(),"previewId"));
     check(resubmitted.priorSubmissionId().equals(returned.id())&&store.workflow().submission(operator.actor(),returned.id()).state()==State.RETURNED,"resubmission links old returned submission without rewriting history");
 
-    for(AuthService.Session directSession:List.of(divisionSession,branchSession,reviewerSession)) {
+    check(post(divisionSession,"/workflow/direct/preview",directForm(divisionSession,fourth,"分行不得直接修改")).status==403,"division cannot directly edit business values");
+    for(AuthService.Session directSession:List.of(branchSession,reviewerSession)) {
       BusinessRecord current=store.find(directSession.actor,fourth.id());Map<String,String> direct=directForm(directSession,current,"直接修改预览 "+directSession.actor.role());Exchange directPage=post(directSession,"/workflow/direct/preview",direct);
-      String outcome=directSession.actor.role()==Role.DIVISION_ADMIN?"分行终审并发布":"提交分行终审";
+      String outcome="提交分行终审";
       check(directPage.status==200&&directPage.body().contains(outcome)&&directPage.body().contains("正式值仍未改变"),directSession.actor.role()+" sees the correct direct-edit approval stage");
     }
     check(post(superSession,"/workflow/direct/preview",directForm(superSession,fourth,"超管越权")).status==403,"super administrator cannot use direct edit entry");

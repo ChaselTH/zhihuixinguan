@@ -32,7 +32,7 @@ public final class BusinessViewTest {
         check(emptyDetail.contains("colspan=\""+(schema.width()+1)+"\""),"empty table spans exactly displayed columns");
         assertExport(data,operator,dataset,"complete",0,"");assertExport(data,operator,dataset,"incomplete",1,"");
         var pending=workflow.confirm(operator,workflow.previewDraft(operator,draft.id(),draft.version()).id(),id());
-        var sent=BusinessWorkflowState.load(platform,operator,List.of(row));check(sent.get(row.record.id).pending().id().equals(pending.id())&&sent.get(row.record.id).draft()==null,"submitted draft not mislabelled unsent");
+        var sent=BusinessWorkflowState.load(platform,operator,List.of(row));check(sent.get(row.record.id).pending()==null&&sent.get(row.record.id).draft()==null&&view(data,operator).filtered(dataset,"","","all").isEmpty(),"operator cannot see a submitted row while branch reviewer holds it");
         expect(WorkflowException.class,()->workflow.saveDraft(peer,"",0,dataset,List.of(new RecordChange(official.id(),official.version(),Map.of(field,"PEER-PENDING"))),"",id()));
         check(workflow.drafts(peer,dataset,0,10).isEmpty(),"parallel operator cannot create a second active task for an in-flight row");
         check(view(data,operator).completedCount()==0,"pending does not increase official completion");
@@ -57,8 +57,8 @@ public final class BusinessViewTest {
       }
       var empty=pages(root).dashboard(new DashboardData(RangeSelection.from(Map.of(),List.of()),List.of(),List.of(),List.of()));check(empty.contains("本期无记录")&&empty.contains("completion-icon empty"),"zero record branch is not yellow overdue/incomplete");
       var d=view(data,division);var selected=filter(division,"multi","all");String detail=pages(division).details(d,selected,1,BusinessWorkflowState.empty());check(detail.contains("business.css")&&detail.contains("col-feedback")&&!detail.contains("fetch("),"local CSS, wide feedback, HTML-only core");
-      check(detail.contains("保存资料补充 · 预览确认")&&!detail.contains("跨支行清单请先筛选"),"division administrator can submit mixed-branch page in one transaction");
-      var single=BusinessFilter.from(division,Map.of("dataset","multi","branch","武进"));check(pages(division).details(d,single,1,BusinessWorkflowState.empty()).contains("保存资料补充 · 预览确认"),"one branch keeps batch preview action");
+      check(!detail.contains("保存资料补充 · 预览确认")&&!detail.contains("<textarea")&&!detail.contains("支行修改记录"),"division administrator sees read-only cross-branch rows and row-level history only");
+      var single=BusinessFilter.from(division,Map.of("dataset","multi","branch","武进"));check(!pages(division).details(d,single,1,BusinessWorkflowState.empty()).contains("保存资料补充 · 预览确认"),"single branch is still read-only for division");
       var internal=new InternalPages("test",session(operator)).overview(view(data,operator),filter(operator,"cross","all"),BusinessWorkflowState.empty());check(internal.contains("行内报表 · 待配置")&&!internal.contains("dataset=negative"),"internal module does not masquerade risk schemas as unknown templates");
       for(var actor:List.of(root,division,branch,operator,reviewer))for(String completion:List.of("all","complete","incomplete"))for(var range:List.of(Map.of("scope","year","year","2026"),Map.of("scope","quarter","year","2026","quarter","3"),Map.of("scope","custom","start","2026-07","end","2026-09"))){
         Map<String,String> query=new HashMap<>(range);query.put("completion",completion);query.put("q","B2-OWN");query.put("branch","武进");query.put("dataset","multi");

@@ -112,6 +112,7 @@ public final class Main extends HttpSupport {
   private void passwordRelogin(HttpExchange x)throws IOException{auth.logout(x);x.getResponseHeaders().add("Set-Cookie",auth.clearCookie());sendHtml(x,200,new IdentityPages(version,null).login("距上次登录已超过 15 分钟，请重新登录后再打开“修改密码”。",auth.loginCsrf(x)));}
   private void login(HttpExchange x)throws IOException{requireForm(x);Map<String,String> f=decodeForm(readLimited(x.getRequestBody(),8192));if(!auth.consumeLoginCsrf(x,f.get("csrf")))throw new SecurityException("登录页面已失效，请重新打开登录页");AuthService.Session session=auth.authenticate(x.getRemoteAddress().getAddress().getHostAddress(),f.get("authNumber"),f.get("password"));if(session==null){sendHtml(x,401,new IdentityPages(version,null).login("账号或密码错误、账号停用或尝试过于频繁，请稍后重试",auth.loginCsrf(x)));return;}x.getResponseHeaders().add("Set-Cookie",auth.setCookie(session));redirect(x,session.mustChangePassword?"/account/password":"/security");}
   private void save(HttpExchange x,AuthService.Session session,Map<String,String> f)throws Exception {
+    if(session.actor.role()==Role.DIVISION_ADMIN)throw new SecurityException("分行管理员不能直接修改业务值，请在对应行使用退回修改");
     DatasetSchema schema=DatasetSchema.get(f.get("dataset"));int count=integer(f.get("rows"),-1);if(count<1||count>50)throw new IllegalArgumentException("保存记录数无效");
     List<RecordChange> changes=new ArrayList<>();
     for(int i=0;i<count;i++){
