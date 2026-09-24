@@ -69,6 +69,8 @@ public final class WorkflowContracts {
         reviewerId,reviewerName,decidedAt,reason,rows,Map.of());
     }
   }
+  /** Live row routing, without pending proposal values. */
+  public record Progress(String recordId,RowStage stage,String previousActor,String currentHandler,String submissionId) {}
   /** from/through filter source periods, not submission creation dates. Null means no constraint. */
   public record Query(String dataset, String organization, State state, LocalDate from, LocalDate through,
                       boolean mineOnly, int offset, int limit) {
@@ -89,6 +91,7 @@ public final class WorkflowContracts {
     /** Copies only active returned shared snapshot rows into a new private operator draft. */
     Draft restoreReturned(ActorContext actor, String submissionId, List<String> recordIds, String requestId);
     Preview preview(ActorContext actor, String previewId);
+    Mode previewMode(ActorContext actor,String previewId);
     /** Only a stored preview ID is accepted: the client cannot replace its confirmed values. */
     Submission confirm(ActorContext actor, String previewId, String requestId);
     Submission submission(ActorContext actor, String id);
@@ -97,7 +100,16 @@ public final class WorkflowContracts {
     List<Submission> pendingDivisionReviews(ActorContext actor, Query query);
     /** Only the caller's branch-review rows that were returned by division are revisable. */
     Set<String> branchRevisionRows(ActorContext actor, String submissionId);
+    /** Private reviewer edit state for a division-returned row, never part of official data. */
+    Draft reviewerRevisionDraft(ActorContext actor, String submissionId, String recordId);
+    Draft saveReviewerRevisionDraft(ActorContext actor, String submissionId, String recordId, long expectedVersion,
+                                   Map<String,String> proposed, String requestId);
     List<Submission> recordHistory(ActorContext actor, String recordId, int offset, int limit);
+    /** Active workflow owner metadata for authorized records; never includes proposed cell values. */
+    Map<String,String> currentOwners(ActorContext actor, Collection<String> recordIds);
+    Map<String,Progress> progress(ActorContext actor, Collection<String> recordIds);
+    /** False for a reopened legacy row without an original operator to receive a reviewer rejection. */
+    boolean mayReject(ActorContext actor,String submissionId);
     /** Row-level operation timeline (submitted/reviewed/returned/published) with the operator name. */
     List<ItemEvent> recordEvents(ActorContext actor, String recordId, int offset, int limit);
     List<AuditEntry> auditTrail(ActorContext actor, String submissionId);

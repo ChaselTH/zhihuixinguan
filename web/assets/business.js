@@ -50,14 +50,9 @@
     });
   }
   function init() {
-    var divs = document.getElementsByTagName("div"), tables = [], i, links, forms;
+    var divs = document.getElementsByTagName("div"), tables = [], i, forms;
     for (i = 0; i < divs.length; i++) if (has(divs[i], "table-scroll")) tables.push(divs[i]);
     for (i = 0; i < tables.length; i++) scrollPair(tables[i]);
-    links = document.getElementsByTagName("a");
-    for (i = 0; i < links.length; i++) if (links[i].getAttribute("data-back") === "yes") on(links[i], "click", function (e) {
-      var ref = document.createElement("a"); ref.href = document.referrer;
-      if (document.referrer && ref.protocol === window.location.protocol && ref.host === window.location.host && ref.href !== window.location.href) { stop(e); window.location.href = ref.href; }
-    });
     forms = document.getElementsByTagName("form");
     for (i = 0; i < forms.length; i++) if (has(forms[i], "import-bulk-confirm")) importForm(forms[i]);
   }

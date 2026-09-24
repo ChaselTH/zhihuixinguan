@@ -16,6 +16,7 @@ final class ImportRecord {
   java.util.Set<String> requiredFields=java.util.Set.of();
   RowStage workflowStage=RowStage.LEGACY_PUBLISHED;
   String workflowReason="";
+  String workflowOwner="";
   java.time.Instant feedbackAsOf=java.time.Instant.now();
   int headerRows;
   List<String> columns = new ArrayList<String>();

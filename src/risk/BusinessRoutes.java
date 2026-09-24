@@ -15,7 +15,7 @@ final class BusinessRoutes extends HttpSupport {
     BusinessFilter filter=BusinessFilter.from(session.actor,input);List<String> months=store.months(session.actor);RangeSelection range=RangeSelection.from(query,months);
     DashboardData data=store.dashboard(range,months,session.actor);
     if(!AccessPolicy.all(session.actor))data.branches.entrySet().removeIf(e->!e.getKey().equals(Organizations.label(session.actor.organizationId())));
-    RiskPages pages=new RiskPages(version,session);String html;
+    RiskPages pages=new RiskPages(version,session).returnTo(ReturnNavigation.safe(query.get("return"),""));String html;
     if(path.equals("/"))html=pages.dashboard(data,states(session,RiskPages.homeRows(data)));
     else if(path.equals("/progress"))html=pages.progress(data,filter.branch);
     else if(path.equals("/branch")){

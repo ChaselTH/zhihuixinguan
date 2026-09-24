@@ -27,10 +27,11 @@ final class DataStore implements AutoCloseable {
   }
   private List<ImportRecord> adapt(List<BusinessRecord> rows,ActorContext actor){
     var deadlines=platform.deadlines().visible(actor);var rules=platform.completionRules().visible(actor);Instant asOf=clock.instant();
+    Map<String,String> owners=actor.role()==xinguan.platform.Role.OPERATOR&&rows.stream().anyMatch(row->row.workflowStage()==xinguan.platform.WorkflowContracts.RowStage.RETURNED)?platform.workflow().currentOwners(actor,rows.stream().filter(row->row.workflowStage()==xinguan.platform.WorkflowContracts.RowStage.RETURNED).map(BusinessRecord::id).toList()):Map.of();
     List<ImportRecord> result=new ArrayList<>();
     for(BusinessRecord row:rows){
       ImportRecord r=new ImportRecord();r.id=row.id();r.dataset=row.dataset();r.period=row.period().key();r.month=YearMonth.from(row.period().start()).toString();r.filename=row.filename();r.importedAt=row.importedAt();r.updatedAt=row.updatedAt();
-      r.workflowStage=row.workflowStage();r.workflowReason=row.workflowReason();
+      r.workflowStage=row.workflowStage();r.workflowReason=row.workflowReason();r.workflowOwner=owners.getOrDefault(row.id(),"");
       r.requiredFields=rules.get(row.dataset()).requiredFields();
       var deadline=deadlines.get(new FeedbackDeadlines.Key(row.dataset(),row.period().key()));r.feedbackAsOf=asOf;if(deadline!=null){r.feedbackDeadline=deadline.dueDate();r.deadlineRevision=deadline.revision();}
       r.columns=DatasetSchema.get(row.dataset()).fields.stream().map(DatasetSchema.Field::title).toList();r.rows.add(row.values());r.versions.add(row.version());r.organizationId=row.organizationId();r.legacyExtras=row.legacyExtras();result.add(r);
@@ -43,8 +44,9 @@ final class DataStore implements AutoCloseable {
   boolean businessVisible(ActorContext actor,BusinessRecord row){
     if(AccessPolicy.all(actor))return true;
     var rule=platform.completionRules().visible(actor).get(row.dataset());
-    return row.workflowStage()==xinguan.platform.WorkflowContracts.RowStage.READY||row.workflowStage()==xinguan.platform.WorkflowContracts.RowStage.RETURNED||(actor.role()!=xinguan.platform.Role.OPERATOR&&row.workflowStage()==xinguan.platform.WorkflowContracts.RowStage.BRANCH_REVIEW)||
-      (row.workflowStage()==xinguan.platform.WorkflowContracts.RowStage.PUBLISHED||row.workflowStage()==xinguan.platform.WorkflowContracts.RowStage.LEGACY_PUBLISHED)&&!rule.complete(row.values());
+    var stage=row.workflowStage();if(actor.role()==Role.OPERATOR)return stage==xinguan.platform.WorkflowContracts.RowStage.READY||stage==xinguan.platform.WorkflowContracts.RowStage.RETURNED&&actor.userId().equals(platform.workflow().currentOwners(actor,List.of(row.id())).get(row.id()))||((stage==xinguan.platform.WorkflowContracts.RowStage.PUBLISHED||stage==xinguan.platform.WorkflowContracts.RowStage.LEGACY_PUBLISHED)&&!rule.complete(row.values()));
+    if(actor.role()==Role.REVIEWER)return stage==xinguan.platform.WorkflowContracts.RowStage.BRANCH_REVIEW;
+    return actor.role()==Role.BRANCH_ADMIN&&(stage==xinguan.platform.WorkflowContracts.RowStage.READY||stage==xinguan.platform.WorkflowContracts.RowStage.RETURNED||stage==xinguan.platform.WorkflowContracts.RowStage.BRANCH_REVIEW||((stage==xinguan.platform.WorkflowContracts.RowStage.PUBLISHED||stage==xinguan.platform.WorkflowContracts.RowStage.LEGACY_PUBLISHED)&&!rule.complete(row.values())));
   }
   private void migrate()throws Exception {
     if(!Files.isDirectory(root.resolve("months")))return;

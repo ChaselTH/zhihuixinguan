@@ -39,7 +39,7 @@ final class DashboardData {
   List<RowRef> filtered(String dataset,String q,String branch,String completion){
     String status=BusinessFilter.completion(completion);
     List<RowRef> result=new ArrayList<>();DatasetSchema s=DatasetSchema.get(dataset);String needle=q==null?"":q.strip().toLowerCase(Locale.ROOT);
-    for(RowRef ref:rows(dataset)){if(actor!=null&&!AccessPolicy.all(actor)&&!ref.visiblePending())continue;if(actor!=null&&actor.role()==Role.OPERATOR&&ref.record.workflowStage==RowStage.BRANCH_REVIEW)continue;if(branch!=null&&!branch.isBlank()&&!branch.equals(s.value(ref.values,s.branchColumn)))continue;
+    for(RowRef ref:rows(dataset)){if(actor!=null&&!AccessPolicy.all(actor)&&!roleVisible(actor,ref))continue;if(branch!=null&&!branch.isBlank()&&!branch.equals(s.value(ref.values,s.branchColumn)))continue;
       if(status.equals("complete")&&!ref.complete()||status.equals("incomplete")&&ref.complete())continue;
       if(status.equals("overdue")&&!ref.overdue())continue;
       if(needle.isEmpty()||ref.values.stream().anyMatch(v->v.toLowerCase(Locale.ROOT).contains(needle)))result.add(ref);
@@ -49,6 +49,12 @@ final class DashboardData {
     result.sort(Comparator.comparingInt(DashboardData::reviewPriority));
     return result;
   }
+  private static boolean roleVisible(ActorContext actor,RowRef ref){RowStage stage=ref.record.workflowStage;return switch(actor.role()){
+    case OPERATOR -> stage==RowStage.READY||stage==RowStage.RETURNED&&actor.userId().equals(ref.record.workflowOwner)||(stage==RowStage.PUBLISHED||stage==RowStage.LEGACY_PUBLISHED)&&!ref.complete();
+    case REVIEWER -> stage==RowStage.BRANCH_REVIEW;
+    case BRANCH_ADMIN -> ref.visiblePending();
+    default -> true;
+  };}
   private static int reviewPriority(RowRef ref){RowStage stage=ref.record.workflowStage;return stage==RowStage.BRANCH_REVIEW||stage==RowStage.DIVISION_REVIEW?0:1;}
   List<FeedbackPeriod> feedbackPeriods(){
     Map<String,FeedbackPeriod> grouped=new LinkedHashMap<>();

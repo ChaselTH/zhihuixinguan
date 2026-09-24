@@ -30,7 +30,9 @@ final class FeedbackHttpTest {
       }
     }
     use(root);fields.put("csrf",csrf());fields.put("dueDate",original);
-    check(post("/deadlines/save",fields).statusCode()==303,"super admin may set tomorrow");
+    check(get("/deadlines?month=2026-09&return=%2Fnotifications").body().contains("data-back=\"fixed\" href=\"/notifications\""),"deadline return points to the actual source page");
+    fields.put("return","/notifications");var saved=post("/deadlines/save",fields);
+    check(saved.statusCode()==303&&saved.headers().firstValue("location").orElse("").contains("return=%2Fnotifications"),"deadline save preserves source for the next back button");fields.remove("return");
     String detail="/details?dataset=multi&scope=month&month=2026-09&period="+URLEncoder.encode(period,StandardCharsets.UTF_8)+"&completion=overdue&q=FEEDBACK-HTTP";
     use(operator);String html=get(detail).body();check(!html.contains("虚构测试企业 FEEDBACK-HTTP"),"future deadline excluded from overdue route");
     String all=get(detail.replace("completion=overdue","completion=all")).body();

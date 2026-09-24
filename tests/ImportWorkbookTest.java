@@ -111,7 +111,7 @@ public final class ImportWorkbookTest {
       for(var role:Role.values()){
         String org=role==Role.SUPER_ADMIN||role==Role.DIVISION_ADMIN?"CZ":"WUJIN";ActorContext actor=new ActorContext("synthetic-"+role,"虚构导出",role,org);int branches=AccessPolicy.all(actor)?9:1;
         for(String dataset:List.of("multi","negative","cross")){
-          var result=service.export(actor,Map.of("dataset",dataset,"scope","year","year","2026"));check(result.count()==branches*3,"annual official scope "+role+dataset);
+          var result=service.export(actor,Map.of("dataset",dataset,"scope","year","year","2026"));if(role==Role.REVIEWER){check(result.count()==0,"reviewer sees only assigned pending work, not legacy official rows "+dataset);continue;}check(result.count()==branches*3,"annual official scope "+role+dataset);
           check(service.export(actor,Map.of("dataset",dataset,"scope","quarter","year","2026","quarter","1")).count()==branches,"quarter scope");
           check(service.export(actor,Map.of("dataset",dataset,"scope","custom","start","2026-04","end","2026-09")).count()==branches*2,"custom month range");
           check(service.export(actor,Map.of("dataset",dataset,"month","2026-09","q","WUJIN")).count()==1,"search same as view filter");

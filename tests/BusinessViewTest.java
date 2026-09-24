@@ -40,7 +40,7 @@ public final class BusinessViewTest {
         var divisionPending=pages(division).details(view(data,division),filter(division,dataset,"all"),1,BusinessWorkflowState.load(platform,division,List.of(row)));check(!divisionPending.contains("business-badge workflow-stage\">待支行复核")&&!divisionPending.contains("class=\"btn btn-primary\" href=\"/workflow/submission?id="),"division list does not offer branch-stage review or branch-stage badge");
         workflow.reject(reviewer,pending.id(),"B2-RETURN-REASON",id());
         dashboard=view(data,operator);row=dashboard.rows(dataset).get(0);var returned=BusinessWorkflowState.load(platform,operator,List.of(row));check(returned.get(row.record.id).draft()!=null&&returned.get(row.record.id).pending()==null,"returned draft recoverable");
-        var returnedPage=pages(operator).details(dashboard,filter(operator,dataset,"all"),1,returned);check(returnedPage.contains("退回待修改")&&returnedPage.contains("B2-RETURN-REASON"),"returned label and reason separate from official completion");
+        var returnedPage=pages(operator).details(dashboard,filter(operator,dataset,"all"),1,returned);check(returnedPage.contains("退回待操作员修改")&&returnedPage.contains("B2-RETURN-REASON"),"returned label and reason separate from official completion");
         var next=workflow.saveDraft(operator,draft.id(),draft.version(),dataset,List.of(new RecordChange(official.id(),official.version(),Map.of(field,"0"))),pending.id(),id());
         var approved=workflow.confirm(operator,workflow.previewDraft(operator,next.id(),next.version()).id(),id());workflow.approve(reviewer,approved.id(),id());
         check(platform.find(operator,official.id()).values().get(DatasetSchema.get(dataset).index(field)).isBlank(),"branch review does not publish through business read model");workflow.approve(division,approved.id(),id());
@@ -75,7 +75,7 @@ public final class BusinessViewTest {
     List<BusinessRecord> records=new ArrayList<>();for(int i=0;i<53;i++)records.add(FoundationTest.candidate("multi","WUJIN","B2-PAGE-"+i));platform.importRows(division,"multi",records,false,id());
     var filter=BusinessFilter.from(operator,Map.of("dataset","multi","completion","incomplete","q","B2-PAGE"));var d=view(data,operator);
     String first=pages(operator).details(d,filter,1,BusinessWorkflowState.empty()),second=pages(operator).details(d,filter,2,BusinessWorkflowState.empty());
-    check(first.contains("&amp;completion=incomplete&amp;page=2")&&second.contains("&amp;completion=incomplete&amp;page=1"),"completion/search preserved across pages");
+    check(first.contains("completion=incomplete")&&first.contains("page=2")&&second.contains("completion=incomplete")&&second.contains("page=1")&&first.contains("B2-PAGE"),"completion/search preserved across pages");
     check(first.contains("name=\"rows\" value=\"20\"")&&second.contains("name=\"rows\" value=\"20\""),"default pagination size 20");
     check(pages(operator).details(d,filter,3,BusinessWorkflowState.empty()).contains("name=\"rows\" value=\"13\""),"final page 13 rows");
     for(int size:List.of(10,50)){var sized=BusinessFilter.from(operator,Map.of("dataset","multi","q","B2-PAGE","pageSize",""+size));check(pages(operator).details(d,sized,1,BusinessWorkflowState.empty()).contains("name=\"rows\" value=\""+size+"\""),"selected page size");}

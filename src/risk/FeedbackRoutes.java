@@ -9,7 +9,7 @@ final class FeedbackRoutes extends HttpSupport {
     if(!x.getRequestURI().getPath().equals("/deadlines"))return false;
     var months=store.months(session.actor);var range=RangeSelection.from(q,months);
     var data=store.dashboard(range,months,session.actor);
-    sendHtml(x,200,new FeedbackPages(version,session).settings(data,"yes".equals(q.get("saved"))?"反馈截止日期已更新":""));return true;
+    sendHtml(x,200,new FeedbackPages(version,session).settings(data,"yes".equals(q.get("saved"))?"反馈截止日期已更新":"",ReturnNavigation.safe(q.get("return"),"/?"+range.queryString())));return true;
   }
   boolean post(HttpExchange x,AuthService.Session session,Map<String,String> f)throws Exception{
     if(!x.getRequestURI().getPath().equals("/deadlines/save"))return false;
@@ -20,6 +20,6 @@ final class FeedbackRoutes extends HttpSupport {
     if(action.equals("save")&&date.isEmpty())throw new IllegalArgumentException("请填写截止日期；需要取消时使用“取消截止日期”按钮");
     store.platform.deadlines().save(session.actor,f.get("dataset"),f.get("period"),date,Long.parseLong(f.getOrDefault("revision","-1")));
     var range=RangeSelection.from(f,store.months(session.actor));
-    redirect(x,"/deadlines?"+range.queryString()+"&saved=yes");return true;
+    redirect(x,ReturnNavigation.link("/deadlines?"+range.queryString()+"&saved=yes",ReturnNavigation.safe(f.get("return"),"/?"+range.queryString())));return true;
   }
 }

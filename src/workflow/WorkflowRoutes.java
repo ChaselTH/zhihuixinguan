@@ -27,7 +27,7 @@ final class WorkflowRoutes {
   boolean get(HttpExchange x,AuthService.Session session,Map<String,String> query)throws Exception {
     String path=x.getRequestURI().getPath();
     if(!Set.of("/workflow","/workflow/drafts","/workflow/edit","/workflow/preview","/workflow/submissions","/workflow/reviews","/workflow/submission","/workflow/review/edit","/workflow/record-history","/workflow/reopen","/workflow/reconfirm").contains(path))return false;
-    WorkflowPages pages=pages(session).returnTo(safeReturn(query.get("return")));
+    WorkflowPages pages=pages(session).returnTo(ReturnNavigation.safe(query.get("return"),""));
     try {
       switch(path) {
         case "/workflow" -> send(x,200,home(pages,session,query));
@@ -38,28 +38,28 @@ final class WorkflowRoutes {
           send(x,200,pages.drafts(workflow.drafts(session.actor,empty(dataset),(page-1)*LIST_PAGE_SIZE,LIST_PAGE_SIZE),dataset,page));
         }
         case "/workflow/edit" -> send(x,200,editor(pages,session,query));
-        case "/workflow/preview" -> {Preview preview=workflow.preview(session.actor,required(query,"id"));rejectDivisionDirect(session.actor,preview);send(x,200,pages.preview(preview,notice(query)));}
+        case "/workflow/preview" -> {Preview preview=workflow.preview(session.actor,required(query,"id"));requireOperatorPreview(preview);send(x,200,pages.preview(preview,notice(query)));}
         case "/workflow/submissions" -> send(x,200,submissions(pages,session,query,false));
         case "/workflow/reviews" -> send(x,200,submissions(pages,session,query,true));
         case "/workflow/submission" -> {
           Submission submission=workflow.submission(session.actor,required(query,"id"));
           Set<String> revisable=session.actor.role()==Role.REVIEWER?workflow.branchRevisionRows(session.actor,submission.id()):Set.of();
-          send(x,200,pages.submission(submission,notice(query),revisable));
+          send(x,200,pages.track(workflow.progress(session.actor,submission.rowStages().keySet())).rejectable(workflow.mayReject(session.actor,submission.id())).submission(submission,notice(query),revisable));
         }
         case "/workflow/review/edit" -> {
           if(session.actor.role()!=Role.REVIEWER)throw new SecurityException("只有支行复核员可以修改分行退回的行");
           Submission submission=workflow.submission(session.actor,required(query,"id"));String recordId=required(query,"record");
           if(!workflow.branchRevisionRows(session.actor,submission.id()).contains(recordId))throw new SecurityException("当前行没有分行退回的可修改任务");
           SnapshotRow row=submission.rows().stream().filter(item->item.before().id().equals(recordId)).findFirst().orElseThrow(()->new SecurityException("记录不存在或无权访问"));
-          String back="/workflow/submission?id="+HttpSupport.url(submission.id());String origin=safeReturn(query.get("return"));if(!origin.isEmpty())back+="&return="+HttpSupport.url(origin);
-          pages.returnTo(back);send(x,200,pages.reviewEdit(submission,row,store.find(session.actor,recordId)));
+          String back="/workflow/submission?id="+HttpSupport.url(submission.id());String origin=ReturnNavigation.safe(query.get("return"),"");if(!origin.isEmpty())back+="&return="+HttpSupport.url(origin);
+          pages.returnTo(back);send(x,200,pages.reviewEdit(submission,row,store.find(session.actor,recordId),workflow.reviewerRevisionDraft(session.actor,submission.id(),recordId),origin));
         }
         case "/workflow/record-history" -> {
           BusinessRecord row=store.find(session.actor,required(query,"record"));
           send(x,200,pages.recordHistory(row,workflow.recordEvents(session.actor,row.id(),0,100),workflow.recordHistory(session.actor,row.id(),0,50)));
         }
         case "/workflow/reopen" -> {AccessPolicy.require(session.actor,AccessPolicy.Action.DIVISION_REVIEW,Organizations.DIVISION);BusinessRecord row=store.find(session.actor,required(query,"record"));if((row.workflowStage()==RowStage.PUBLISHED||row.workflowStage()==RowStage.LEGACY_PUBLISHED)&&!store.completionRules().visible(session.actor).get(row.dataset()).complete(row.values()))throw new IllegalArgumentException("该行尚未满足正式完成规则，无需执行终审重开");if(row.workflowStage()!=RowStage.PUBLISHED&&row.workflowStage()!=RowStage.LEGACY_PUBLISHED&&row.workflowStage()!=RowStage.RETURNED)throw new IllegalArgumentException("只能查看正式已完成或退回的记录");send(x,200,pages.reopen(row,notice(query)));}
-        case "/workflow/reconfirm" -> {BusinessRecord row=store.find(session.actor,required(query,"record"));if(!canEditStage(session.actor,row)||row.workflowStage()!=RowStage.RETURNED)throw new SecurityException("该记录当前不在可核对的退回范围");send(x,200,pages.reconfirm(row));}
+        case "/workflow/reconfirm" -> throw new SecurityException("原值重提入口已停用，请按当前流程退回或修改后提交");
         default -> { return false; }
       }
       return true;
@@ -71,23 +71,20 @@ final class WorkflowRoutes {
   boolean post(HttpExchange x,AuthService.Session session,Map<String,String> form)throws Exception {
     String path=x.getRequestURI().getPath();
     if(!Set.of("/workflow/draft/save","/workflow/direct/preview","/workflow/confirm","/workflow/review/approve","/workflow/review/reject","/workflow/review/revise","/workflow/reopen","/workflow/reconfirm","/workflow/returned/restore").contains(path))return false;
-    WorkflowPages pages=pages(session);
+    WorkflowPages pages=pages(session).returnTo(ReturnNavigation.safe(form.get("return"),""));
     try {
       switch(path) {
         case "/workflow/draft/save" -> saveDraft(x,pages,session,form);
         case "/workflow/direct/preview" -> directPreview(x,pages,session,form);
-        case "/workflow/reconfirm" -> {
-          if(!"yes".equals(form.get("confirm")))throw new IllegalArgumentException("请明确确认已核对原内容");
-          Preview preview=workflow.previewReturned(session.actor,required(form,"recordId"),number(form.get("expectedVersion"),"正式版本"));
-          send(x,200,pages.preview(preview,"本次为退回任务的原值重新确认，不修改字段；最终确认后生成新一轮可追溯审批。"));
-        }
+        case "/workflow/reconfirm" -> throw new SecurityException("原值重提入口已停用，请按当前流程退回或修改后提交");
         case "/workflow/returned/restore" -> {
-          Draft draft=workflow.restoreReturned(session.actor,required(form,"submissionId"),recordIds(required(form,"recordIds")),required(form,"requestId"));
-          HttpSupport.redirect(x,"/workflow/edit?dataset="+HttpSupport.url(draft.dataset())+"&draft="+HttpSupport.url(draft.id()));
+          String source=required(form,"submissionId");Draft draft=workflow.restoreReturned(session.actor,source,recordIds(required(form,"recordIds")),required(form,"requestId"));
+          String back=ReturnNavigation.link("/workflow/submission?id="+HttpSupport.url(source),pages.returnUrl());
+          HttpSupport.redirect(x,"/workflow/edit?dataset="+HttpSupport.url(draft.dataset())+"&draft="+HttpSupport.url(draft.id())+"&return="+HttpSupport.url(back));
         }
         case "/workflow/confirm" -> {
-          if(session.actor.role()==Role.DIVISION_ADMIN)throw new SecurityException("分行管理员不能直接修改业务值，请通过退回修改交由支行填报");
           String previewId=required(form,"previewId");
+          if(workflow.previewMode(session.actor,previewId)!=Mode.REVIEW)throw new SecurityException("旧版直接修改预览已停用，请由操作员发起填报");
           Submission result=workflow.confirm(session.actor,previewId,required(form,"requestId"));
           send(x,200,pages.submission(result,"提交已确认；请以当前单据状态为准。"));
         }
@@ -111,19 +108,27 @@ final class WorkflowRoutes {
         }
         case "/workflow/review/revise" -> {
           if(session.actor.role()!=Role.REVIEWER)throw new SecurityException("只有支行复核员可以修改分行退回的行");
-          if(!"yes".equals(form.get("confirm")))throw new IllegalArgumentException("请确认修改内容并提交分行终审");
           String submissionId=required(form,"submissionId"),recordId=required(form,"recordId");BusinessRecord current=store.find(session.actor,recordId);
           DatasetSchema schema=DatasetSchema.get(current.dataset());Map<String,String> proposed=new LinkedHashMap<>();
           for(var field:schema.fields)if(field.editable())proposed.put(field.key(),requiredField(form,"value_"+field.key()));
-          workflow.reviseForDivision(session.actor,submissionId,recordId,number(form.get("expectedVersion"),"记录版本"),proposed,required(form,"requestId"));
-          HttpSupport.redirect(x,"/workflow/reviews?notice="+HttpSupport.url("已修改并送分行终审；正式值尚未改变。"));
+          if("save".equals(form.get("intent"))){
+            Draft saved=workflow.saveReviewerRevisionDraft(session.actor,submissionId,recordId,number(form.get("draftVersion"),"草稿版本"),proposed,required(form,"requestId"));
+            String target="/workflow/review/edit?id="+HttpSupport.url(submissionId)+"&record="+HttpSupport.url(recordId)+"&notice="+HttpSupport.url("已保存本人复核草稿（版本 "+saved.version()+"），正式数据未变。");
+            if(!pages.returnUrl().isEmpty())target+="&return="+HttpSupport.url(pages.returnUrl());
+            HttpSupport.redirect(x,target);
+          }else if("submit".equals(form.get("intent"))){
+            Submission updated=workflow.reviseForDivision(session.actor,submissionId,recordId,number(form.get("expectedVersion"),"记录版本"),proposed,required(form,"requestId"));
+            send(x,200,pages.submission(updated,"已提交分行终审；该行已从支行复核待办移除，正式值尚未改变。"));
+          }else throw new IllegalArgumentException("请选择保存或提交");
         }
         case "/workflow/reopen" -> {
           AccessPolicy.require(session.actor,AccessPolicy.Action.DIVISION_REVIEW,Organizations.DIVISION);
           if(!"yes".equals(form.get("confirm")))throw new IllegalArgumentException("请勾选确认，仅重新打开所选记录");
           String recordId=required(form,"recordId");BusinessRecord row=store.find(session.actor,recordId);
-          workflow.reopenCompleted(session.actor,recordId,number(form.get("expectedVersion"),"正式版本"),form.get("reason"),required(form,"requestId"));
-          HttpSupport.redirect(x,"/workflow/reopen?record="+HttpSupport.url(recordId)+"&notice="+HttpSupport.url("已退回支行待处理；正式值和正式版本保持不变。"));
+          String task=workflow.reopenCompleted(session.actor,recordId,number(form.get("expectedVersion"),"正式版本"),form.get("reason"),required(form,"requestId"));
+          String target="/workflow/submission?id="+HttpSupport.url(task)+"&notice="+HttpSupport.url("已交支行复核员处理；正式值和版本保持不变。");
+          if(!pages.returnUrl().isEmpty())target+="&return="+HttpSupport.url(pages.returnUrl());
+          HttpSupport.redirect(x,target);
         }
         default -> { return false; }
       }
@@ -144,13 +149,13 @@ final class WorkflowRoutes {
     boolean mine=actor.role()==Role.OPERATOR||!AccessPolicy.all(actor);
     List<Submission> submissions=workflow.submissions(actor,new Query(null,null,null,null,null,mine,0,10));
     List<Submission> pending=actor.role()==Role.REVIEWER?workflow.pendingReviews(actor,Query.firstPage()):actor.role()==Role.DIVISION_ADMIN?workflow.pendingDivisionReviews(actor,Query.firstPage()):List.of();
-    return pages.home(drafts,submissions,pending,notice(query));
+    return pages.track(tracking(actor,submissions,pending)).home(drafts,submissions,pending,notice(query));
   }
 
   private String editor(WorkflowPages pages,AuthService.Session session,Map<String,String> query) {
     ActorContext actor=session.actor;
     boolean draftMode=actor.role()==Role.OPERATOR;
-    if(!draftMode&&!canDirect(actor))throw new SecurityException("当前角色不能填写工作流数据");
+    if(!draftMode)throw new SecurityException("请从操作员待处理清单填报；复核员请从复核待办处理分行退回的记录");
     String dataset=clean(query.getOrDefault("dataset","multi"));DatasetSchema.get(dataset);
     String organization=editableOrganization(actor,query.get("organization"));
     LocalDate from=date(query.get("from"),"开始日期"),through=date(query.get("through"),"结束日期");
@@ -207,7 +212,7 @@ final class WorkflowRoutes {
     Draft saved=workflow.saveDraft(session.actor,id,version,dataset,List.copyOf(complete.values()),prior,required(form,"requestId"));
     if("preview".equals(form.get("intent"))) {
       Preview preview=workflow.previewDraft(session.actor,saved.id(),saved.version());
-      send(x,200,pages.preview(preview,"草稿已保存，以下为本草稿全部差异（含其他分页／筛选范围）；预览尚未创建待办。",editUrl(form,saved.id(),"")));
+      send(x,200,pages.preview(preview,"草稿已保存，以下为本草稿全部差异（含其他分页／筛选范围）；预览尚未创建待办。",editUrl(form,saved.id(),""),ReturnNavigation.safe(form.get("return"),"/workflow")));
       return;
     }
     HttpSupport.redirect(x,editUrl(form,saved.id(),"草稿已保存，版本 "+saved.version()+"；其他分页中的已保存修改仍保留。"));
@@ -255,7 +260,11 @@ final class WorkflowRoutes {
     int page=positivePage(query.get("page"));boolean mine=!pending&&(actor.role()==Role.OPERATOR||"1".equals(query.get("mine")));
     Query request=new Query(empty(dataset),empty(org),state,from,through,mine,(page-1)*LIST_PAGE_SIZE,LIST_PAGE_SIZE);
     List<Submission> rows=pending?(actor.role()==Role.DIVISION_ADMIN?workflow.pendingDivisionReviews(actor,request):workflow.pendingReviews(actor,request)):workflow.submissions(actor,request);
-    return pages.submissions(rows,dataset,org,state,from,through,mine,page,pending,notice(query));
+    return pages.track(tracking(actor,rows)).submissions(rows,dataset,org,state,from,through,mine,page,pending,notice(query));
+  }
+  @SafeVarargs private final Map<String,Progress> tracking(ActorContext actor,List<Submission>... groups){
+    Set<String> ids=new LinkedHashSet<>();for(List<Submission> group:groups)for(Submission item:group)ids.addAll(item.rowStages().keySet());
+    List<String> all=new ArrayList<>(ids);Map<String,Progress> result=new HashMap<>();for(int from=0;from<all.size();from+=500)result.putAll(workflow.progress(actor,all.subList(from,Math.min(from+500,all.size()))));return Map.copyOf(result);
   }
 
   private void verifyPrior(ActorContext actor,String prior,String dataset) {
@@ -282,20 +291,18 @@ final class WorkflowRoutes {
   }
 
   private static boolean canDirect(ActorContext actor) {
-    return actor.role()==Role.BRANCH_ADMIN||actor.role()==Role.REVIEWER;
+    return false;
   }
 
   private static void rejectDivisionDirect(ActorContext actor,Preview preview) {
     if(actor.role()==Role.DIVISION_ADMIN&&(preview.mode()==Mode.DIRECT||preview.mode()==Mode.BATCH_DIRECT))throw new SecurityException("分行管理员不能直接修改业务值，请通过退回修改交由支行填报");
   }
+  private static void requireOperatorPreview(Preview preview){if(preview.mode()!=Mode.REVIEW)throw new SecurityException("旧版直接修改预览已停用，请由操作员发起填报");}
 
   private boolean canEditStage(ActorContext actor,BusinessRecord row) {
     RowStage stage=row.workflowStage();if(stage==RowStage.BRANCH_REVIEW||stage==RowStage.DIVISION_REVIEW)return false;
     if(actor.role()==Role.DIVISION_ADMIN)return false;
-    if(actor.role()==Role.OPERATOR||actor.role()==Role.BRANCH_ADMIN||actor.role()==Role.REVIEWER) {
-      if(stage==RowStage.READY||stage==RowStage.RETURNED)return true;
-      if(stage==RowStage.PUBLISHED||stage==RowStage.LEGACY_PUBLISHED)return !store.completionRules().visible(actor).get(row.dataset()).complete(row.values());
-    }
+    if(actor.role()==Role.OPERATOR)return stage==RowStage.READY||stage==RowStage.RETURNED&&actor.userId().equals(store.workflow().currentOwners(actor,List.of(row.id())).get(row.id()))||((stage==RowStage.PUBLISHED||stage==RowStage.LEGACY_PUBLISHED)&&!store.completionRules().visible(actor).get(row.dataset()).complete(row.values()));
     return false;
   }
 
@@ -317,10 +324,6 @@ final class WorkflowRoutes {
   private static String requiredField(Map<String,String> values,String key) {String value=values.get(key);if(value==null)throw new IllegalArgumentException("页面字段缺失，请刷新后重试");return value;}
   private static List<String> recordIds(String value){List<String> ids=Arrays.stream(value.split(",",-1)).map(String::strip).toList();if(ids.stream().anyMatch(String::isEmpty))throw new IllegalArgumentException("审核记录范围无效，请刷新页面后重新选择");return ids;}
   private static String clean(String value) {return value==null?"":value.strip();}
-  private static String safeReturn(String value) {
-    String target=clean(value);if(target.length()>2048||target.indexOf('\\')>=0||target.indexOf('#')>=0||target.chars().anyMatch(c->c<32))return "";
-    String path=target.split("\\?",2)[0];return Set.of("/","/details","/branch","/progress").contains(path)?target:"";
-  }
   private static String empty(String value) {return value==null||value.isEmpty()?null:value;}
   private static String notice(Map<String,String> values) {return HttpSupport.limit(values.get("notice"),300);}
 
@@ -328,9 +331,11 @@ final class WorkflowRoutes {
     if("details".equals(form.get("view")))return detailsUrl(form,draft)+"&notice="+HttpSupport.url(notice);
     StringBuilder url=new StringBuilder("/workflow/edit?dataset=").append(HttpSupport.url(form.getOrDefault("dataset","multi")));
     for(String key:List.of("organization","from","through","page","record"))if(!clean(form.get(key)).isEmpty())url.append('&').append(key).append('=').append(HttpSupport.url(form.get(key)));
+    if(!clean(form.get("return")).isEmpty())url.append("&return=").append(HttpSupport.url(ReturnNavigation.safe(form.get("return"),"/workflow")));
     url.append("&draft=").append(HttpSupport.url(draft)).append("&notice=").append(HttpSupport.url(notice));return url.toString();
   }
   static String detailsUrl(Map<String,String> form,String draft){
+    String origin=ReturnNavigation.safe(form.get("return"),"");if(origin.startsWith("/details?"))return origin+(clean(draft).isEmpty()?"":"&draft="+HttpSupport.url(draft));
     StringBuilder url=new StringBuilder("/details?dataset=").append(HttpSupport.url(form.getOrDefault("dataset","multi")));
     for(String key:List.of("scope","month","year","quarter","start","end","branch","q","completion","period","pageSize","page"))
       if(!clean(form.get(key)).isEmpty())url.append('&').append(key).append('=').append(HttpSupport.url(form.get(key)));

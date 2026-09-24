@@ -8,7 +8,7 @@ final class CompletionRuleRoutes extends HttpSupport {
   boolean get(HttpExchange x,AuthService.Session session,Map<String,String> q)throws Exception {
     if(!x.getRequestURI().getPath().equals("/completion-rules"))return false;
     String dataset=q.getOrDefault("dataset","multi");DatasetSchema.get(dataset);
-    sendHtml(x,200,new CompletionRulePages(version,session).settings(store.completionRules().visible(session.actor).get(dataset),"yes".equals(q.get("saved"))));return true;
+    sendHtml(x,200,new CompletionRulePages(version,session).returnTo(q.get("return")).settings(store.completionRules().visible(session.actor).get(dataset),"yes".equals(q.get("saved"))));return true;
   }
   boolean post(HttpExchange x,AuthService.Session session,Map<String,String> form)throws Exception {
     if(!x.getRequestURI().getPath().equals("/completion-rules/save"))return false;
@@ -21,6 +21,6 @@ final class CompletionRuleRoutes extends HttpSupport {
       if(value.equals("true"))required.add(field.key());
     }
     store.completionRules().save(session.actor,schema.id,required,Long.parseLong(form.getOrDefault("revision","-1")));
-    redirect(x,"/completion-rules?dataset="+schema.id+"&saved=yes");return true;
+    redirect(x,ReturnNavigation.link("/completion-rules?dataset="+schema.id+"&saved=yes",ReturnNavigation.safe(form.get("return"),"/")));return true;
   }
 }

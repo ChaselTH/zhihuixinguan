@@ -61,8 +61,8 @@ for (const legacy of [false, true]) {
   f.accept(true); const accepted = f.form.fire('submit'); check(accepted.returnValue !== false && f.confirmed.value === 'yes', 'OK submits explicit confirmed flag');
   check(f.prompt().includes('空白也会清空') && f.prompt().includes('预计更新 4 条'), 'overwrite prompt includes counts and clearing warning');
   f.select.value = 'preserve'; f.select.fire('change'); f.form.fire('submit'); check(!f.prompt().includes('空白也会清空'), 'preserve prompt does not claim destructive clearing');
-  const backEvent = f.back.fire('click'); check(backEvent.returnValue === false && f.win.location.href === f.doc.referrer, 'same-origin back opens the exact referring page with its filters');
-  f.doc.referrer = 'http://other.invalid/'; check(f.back.fire('click').returnValue !== false && f.win.location.href !== f.doc.referrer, 'foreign referrer leaves safe fallback link intact');
+  check(f.back.fire('click').returnValue !== false, 'back link uses its explicit server-rendered href rather than browser referrer');
 }
+check(!source.includes('document.referrer'), 'back navigation never guesses the origin from browser referrer');
 check(!/\b(?:const|let|Promise|fetch)\b|=>|\.classList|\.closest\(/.test(source), 'production interactions avoid modern-only syntax and APIs');
 console.log('BUSINESS_INTERACTIONS_OK assertions=' + assertions + ' modern/attachEvent DOM stubs; not real IE verification');
