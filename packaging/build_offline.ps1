@@ -53,6 +53,7 @@ if ($privateBootstrapPath) {
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'install.sh') -Destination $bundle
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\离线安装与升级.md') -Destination (Join-Path $bundle '安装测试说明.md')
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\发布检查.md') -Destination (Join-Path $bundle '测试记录.md')
+Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\v0.4-工作流重构验收.md') -Destination (Join-Path $bundle '角色验收步骤.md')
 [IO.File]::WriteAllText((Join-Path $bundle 'SOURCE_COMMIT'),$sourceCommit+"`n",[Text.UTF8Encoding]::new($false))
 Copy-Item -LiteralPath (Join-Path $projectRoot 'THIRD_PARTY_NOTICES.md') -Destination $bundle
 $checks=@()

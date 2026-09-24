@@ -1,4 +1,4 @@
-# 智慧信管 V0.4.0-rc.1
+# 智慧信管 V0.4.0-rc.2
 
 本版重整填报、复核、终审的页面和任务归属；数据库 schema 仍为 10。麒麟安装和运行完全离线，包内含 Linux x86_64／aarch64 Java，不需要另装数据库或 Node。网页采用 Java 服务端 HTML 和本地静态资源；真实麒麟、Win7 旧 IE 仍需现场验收。
 
@@ -38,7 +38,7 @@
 
 ## 安装、启动和更新
 
-生成离线安装包后，使用与网页版本号一致的完整 `zhihui-xinguan-offline-0.4.0-rc.1-kylin` 目录。先在工作电脑旧服务窗口 Ctrl+C 停止，将完整包复制到麒麟本地，再执行：
+生成离线安装包后，使用与网页版本号一致的完整 `zhihui-xinguan-offline-0.4.0-rc.2-kylin` 目录。先在工作电脑旧服务窗口 Ctrl+C 停止，将完整包复制到麒麟本地，再执行：
 
 ```bash
 bash install.sh
@@ -48,7 +48,7 @@ cd "$HOME/ZhihuiXinguan-PR0"
 
 无需卸载。默认目标沿用原 ZhihuiXinguan-PR0；如果原来装在其他目录，必须通过 INSTALL_DIR 指定原安装绝对路径。不要把 U 盘包目录当成原安装目录。详见包同级《安装测试说明.md》。
 
-启动时询问端口，回车为 2874；Ctrl+C 关闭，`./start.sh status` 查询状态。网页应显示 0.4.0-rc.1，/health 应返回 SCHEMA=10。
+启动时询问端口，回车为 2874；Ctrl+C 关闭，`./start.sh status` 查询状态。网页应显示 0.4.0-rc.2，/health 应返回 SCHEMA=10。
 
 ## 数据保留和升级边界
 
